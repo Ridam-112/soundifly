@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: soundifly-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    autoDeploy: true
