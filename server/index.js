@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import https from 'https';
 import http from 'http';
+import CryptoJS from 'crypto-js';
 import { fetchTheLyricsApi } from './the_lyrics_api.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -68,6 +69,34 @@ const YTM_CONTEXT = {
 // In-memory cache for audio direct URLs
 const streamCache = new Map();
 
+function decryptSaavnMediaUrl(enc) {
+  if (!enc) return null;
+  try {
+    const key = CryptoJS.enc.Utf8.parse('38346591');
+    const decrypted = CryptoJS.DES.decrypt(
+      { ciphertext: CryptoJS.enc.Base64.parse(enc) },
+      key,
+      { mode: CryptoJS.mode.ECB, padding: CryptoJS.pad.Pkcs7 }
+    );
+    const raw = decrypted.toString(CryptoJS.enc.Utf8);
+    return raw ? raw.replace('_96.mp4', '_320.mp4') : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function searchSaavn(q) {
+  try {
+    const url = `https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&n=20&p=1&q=${encodeURIComponent(q)}`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }, signal: AbortSignal.timeout(4000) });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.results || [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function getYtDlpBin() {
   if (fs.existsSync('/usr/local/bin/yt-dlp')) return '/usr/local/bin/yt-dlp';
   if (fs.existsSync(ytdlpExe)) return ytdlpExe;
@@ -88,12 +117,12 @@ function getDirectStreamUrl(videoId) {
     // Use Node.js runtime for signature evaluation (clean, fast 2s extract)
     const cmd = `"${bin}" --no-warnings --js-runtimes node -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
 
-    exec(cmd, { timeout: 15000 }, (error, stdout, stderr) => {
+    exec(cmd, { timeout: 10000 }, (error, stdout, stderr) => {
       if (error || !stdout.trim()) {
         console.error('yt-dlp primary error for videoId', videoId, 'stderr:', stderr);
         // Fallback: try android player client
         const fbCmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android" -g -f "ba/b" "${videoUrl}"`;
-        exec(fbCmd, { timeout: 15000 }, (fErr, fOut, fStderr) => {
+        exec(fbCmd, { timeout: 8000 }, (fErr, fOut, fStderr) => {
           if (fErr || !fOut.trim()) {
             return reject(new Error('Extraction failed'));
           }
@@ -143,7 +172,7 @@ app.get('/api/ytdl-version', (req, res) => {
   });
 });
 
-// 1. YouTube Music Live Search
+// 1. Unified Live Search (JioSaavn 320kbps + YouTube Music fallback)
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
   if (!query) {
@@ -151,20 +180,51 @@ app.get('/api/search', async (req, res) => {
   }
 
   try {
+    // 1. Search JioSaavn first for crystal-clear 320kbps instant songs
+    const saavnResults = await searchSaavn(query);
+    const saavnSongs = saavnResults.map(s => {
+      const decUrl = decryptSaavnMediaUrl(s.encrypted_media_url);
+      if (!decUrl) return null;
+      const songId = `saavn_${s.id}`;
+      streamCache.set(songId, { url: decUrl, timestamp: Date.now() });
+
+      const durSec = parseInt(s.duration, 10) || 210;
+      const durMin = Math.floor(durSec / 60);
+      const durRemSec = String(durSec % 60).padStart(2, '0');
+
+      return {
+        id: songId,
+        title: (s.song || query).replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&'),
+        artist: (s.primary_artists || s.singers || 'Artist').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&'),
+        album: s.album || 'Single',
+        coverUrl: s.image ? s.image.replace('150x150', '500x500') : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+        audioUrl: `${getBaseUrl(req)}/api/stream/${songId}`,
+        durationSeconds: durSec,
+        durationFormatted: `${durMin}:${durRemSec}`,
+        genre: s.language || 'Music'
+      };
+    }).filter(Boolean);
+
+    if (saavnSongs.length > 0) {
+      return res.json(saavnSongs);
+    }
+  } catch (err) {
+    console.error('Saavn search error:', err.message);
+  }
+
+  // 2. YouTube Music fallback
+  try {
     const response = await fetch(YTM_SEARCH_URL, {
       method: 'POST',
       headers: YTM_HEADERS,
       body: JSON.stringify({
         context: YTM_CONTEXT,
         query: query,
-        params: 'EgWKAQIIAWoKEAoQCRADEAQQBQ%3D%3D' // Filter exclusively for Songs
+        params: 'EgWKAQIIAWoKEAoQCRADEAQQBQ%3D%3D'
       })
     });
 
-    if (!response.ok) {
-      throw new Error(`YouTube Music responded with status ${response.status}`);
-    }
-
+    if (!response.ok) throw new Error(`YouTube status ${response.status}`);
     const data = await response.json();
     const section = data.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0];
     const items = section?.musicShelfRenderer?.contents || [];
@@ -172,34 +232,27 @@ app.get('/api/search', async (req, res) => {
     const songs = items.map(item => {
       const r = item.musicResponsiveListItemRenderer;
       if (!r) return null;
-
       const title = r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text || 'Unknown Title';
       const flex1Runs = r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
       const artist = flex1Runs[0]?.text || 'Various Artists';
-      
       let album = 'Single';
       let durationStr = '3:30';
 
       for (let i = 1; i < flex1Runs.length; i++) {
         const text = flex1Runs[i].text.trim();
         if (text === '•') continue;
-        if (/^\d+:\d+$/.test(text)) {
-          durationStr = text;
-        } else if (text.length > 1) {
-          album = text;
-        }
+        if (/^\d+:\d+$/.test(text)) durationStr = text;
+        else if (text.length > 1) album = text;
       }
 
       const videoId = r.playlistItemData?.videoId || 
                       r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
-
       if (!videoId) return null;
 
       const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
       const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
-
       const durParts = durationStr.split(':').map(Number);
-      const durationSeconds = durParts.length === 2 ? durParts[0] * 60 + durParts[1] : (durParts.length === 3 ? durParts[0] * 3600 + durParts[1] * 60 + durParts[2] : 210);
+      const durationSeconds = durParts.length === 2 ? durParts[0] * 60 + durParts[1] : 210;
 
       return {
         id: videoId,
@@ -252,8 +305,41 @@ app.get('/api/suggestions', async (req, res) => {
   }
 });
 
-// 3. YouTube Music Trending Tracks
+// 3. Trending Tracks (JioSaavn 320kbps + YouTube Music fallback)
 app.get('/api/trending', async (req, res) => {
+  try {
+    const saavnResults = await searchSaavn('Top Trending Hits 2026');
+    const saavnSongs = saavnResults.map(s => {
+      const decUrl = decryptSaavnMediaUrl(s.encrypted_media_url);
+      if (!decUrl) return null;
+      const songId = `saavn_${s.id}`;
+      streamCache.set(songId, { url: decUrl, timestamp: Date.now() });
+
+      const durSec = parseInt(s.duration, 10) || 215;
+      const durMin = Math.floor(durSec / 60);
+      const durRemSec = String(durSec % 60).padStart(2, '0');
+
+      return {
+        id: songId,
+        title: (s.song || 'Trending Hit').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&'),
+        artist: (s.primary_artists || s.singers || 'Popular Artist').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&'),
+        album: s.album || 'Trending Hits',
+        coverUrl: s.image ? s.image.replace('150x150', '500x500') : 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80',
+        audioUrl: `${getBaseUrl(req)}/api/stream/${songId}`,
+        durationSeconds: durSec,
+        durationFormatted: `${durMin}:${durRemSec}`,
+        genre: s.language || 'Top Trending'
+      };
+    }).filter(Boolean);
+
+    if (saavnSongs.length >= 5) {
+      return res.json(saavnSongs);
+    }
+  } catch (err) {
+    console.error('Trending fetch error:', err.message);
+  }
+
+  // Fallback to YouTube Music
   try {
     const response = await fetch(YTM_SEARCH_URL, {
       method: 'POST',
@@ -272,25 +358,20 @@ app.get('/api/trending', async (req, res) => {
     const songs = items.slice(0, 15).map(item => {
       const r = item.musicResponsiveListItemRenderer;
       if (!r) return null;
-
       const title = r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text || 'Trending Song';
       const flex1Runs = r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
       const artist = flex1Runs[0]?.text || 'Popular Artist';
-      
       let durationStr = '3:45';
       for (let i = 1; i < flex1Runs.length; i++) {
         const text = flex1Runs[i].text.trim();
         if (/^\d+:\d+$/.test(text)) durationStr = text;
       }
-
       const videoId = r.playlistItemData?.videoId || 
                       r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
-
       if (!videoId) return null;
 
       const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
       const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80';
-
       const durParts = durationStr.split(':').map(Number);
       const durationSeconds = durParts.length === 2 ? durParts[0] * 60 + durParts[1] : 210;
 
@@ -347,13 +428,43 @@ app.get('/api/image-proxy', (req, res) => {
   }
 });
 
-// 4. REAL-TIME HIGH-SPEED AUDIO STREAMING (302 Direct CDN Redirect with Guaranteed Fallback)
+// 5. REAL-TIME HIGH-SPEED AUDIO STREAMING (302 Direct CDN Redirect with Instant 320kbps playback)
 app.get('/api/stream/:videoId', async (req, res) => {
   const videoId = req.params.videoId;
   if (!videoId || videoId === 'undefined') {
     return res.status(400).send('Invalid videoId');
   }
 
+  // 1. Check in-memory cache first (instant 0ms response)
+  if (streamCache.has(videoId)) {
+    const cached = streamCache.get(videoId);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    return res.redirect(302, cached.url);
+  }
+
+  // 2. If it's a Saavn song ID
+  if (videoId.startsWith('saavn_')) {
+    const cleanId = videoId.replace('saavn_', '');
+    try {
+      const dUrl = `https://www.jiosaavn.com/api.php?__call=song.getDetails&pids=${cleanId}&_format=json`;
+      const sRes = await fetch(dUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(4000) });
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        const decUrl = decryptSaavnMediaUrl(sData[cleanId]?.encrypted_media_url);
+        if (decUrl) {
+          streamCache.set(videoId, { url: decUrl, timestamp: Date.now() });
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          return res.redirect(302, decUrl);
+        }
+      }
+    } catch (e) {
+      console.error('Saavn stream resolution error:', e);
+    }
+  }
+
+  // 3. Try YouTube stream extraction with Node JS runtime
   try {
     const directUrl = await getDirectStreamUrl(videoId);
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -361,9 +472,11 @@ app.get('/api/stream/:videoId', async (req, res) => {
     return res.redirect(302, directUrl);
   } catch (err) {
     console.error('Stream extraction failed for videoId:', videoId, err.message);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    return res.redirect(302, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
   }
+
+  // 4. Guaranteed fallback stream (audio will ALWAYS play without crashing)
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  return res.redirect(302, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
 });
 
 // Helper function to parse LRC time-synced lyrics
