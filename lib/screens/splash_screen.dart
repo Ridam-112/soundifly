@@ -94,10 +94,9 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                     children: [
                       // Soundifly Brand Icon with Neon Glow
                       Container(
-                        width: 96,
-                        height: 96,
+                        width: 108,
+                        height: 108,
                         decoration: BoxDecoration(
-                          gradient: AppGradients.primaryOrange,
                           borderRadius: BorderRadius.circular(28),
                           boxShadow: [
                             BoxShadow(
@@ -108,11 +107,13 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                             ),
                           ],
                         ),
-                        child: const Center(
-                          child: Icon(
-                            Icons.graphic_eq_rounded,
-                            size: 54,
-                            color: Colors.white,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(28),
+                          child: Image.asset(
+                            'assets/images/logo.png',
+                            width: 108,
+                            height: 108,
+                            fit: BoxFit.cover,
                           ),
                         ),
                       ),

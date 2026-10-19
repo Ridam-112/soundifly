@@ -55,13 +55,14 @@ class _HomeScreenState extends State<HomeScreen> {
             backgroundColor: AppColors.bgDark.withValues(alpha: 0.85),
             title: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(7),
-                  decoration: BoxDecoration(
-                    gradient: AppGradients.primaryOrange,
-                    borderRadius: BorderRadius.circular(10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.cover,
                   ),
-                  child: const Icon(Icons.graphic_eq_rounded, color: Colors.white, size: 20),
                 ),
                 const SizedBox(width: 10),
                 const Text(

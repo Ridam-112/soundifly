@@ -134,10 +134,10 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(10),
+                            width: 44,
+                            height: 44,
                             decoration: BoxDecoration(
-                              gradient: AppGradients.primaryOrange,
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(12),
                               boxShadow: [
                                 BoxShadow(
                                   color: AppColors.primary.withValues(alpha: 0.4),
@@ -146,7 +146,15 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                 ),
                               ],
                             ),
-                            child: const Icon(Icons.music_note_rounded, color: Colors.white, size: 28),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.asset(
+                                'assets/images/logo.png',
+                                width: 44,
+                                height: 44,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
                           ),
                           const SizedBox(width: 12),
                           const Text(
