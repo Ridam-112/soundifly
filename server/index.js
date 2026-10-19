@@ -25,6 +25,26 @@ function getBaseUrl(req) {
 app.use(cors());
 app.use(express.json());
 
+// Health check & welcome route
+app.get('/', (req, res) => {
+  res.json({
+    status: 'online',
+    service: 'Soundifly Music API Engine',
+    version: '1.0.0',
+    message: 'Soundifly Backend is running smoothly 🚀',
+    endpoints: [
+      '/api/trending',
+      '/api/search?q={query}',
+      '/api/lyrics?title={title}',
+      '/api/stream/{videoId}'
+    ]
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 // YouTube Music Innertube Client Configuration
 const YTM_SEARCH_URL = 'https://music.youtube.com/youtubei/v1/search?prettyPrint=false';
 const YTM_SUGGESTIONS_URL = 'https://music.youtube.com/youtubei/v1/music/get_search_suggestions?prettyPrint=false';

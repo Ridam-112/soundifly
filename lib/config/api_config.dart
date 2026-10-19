@@ -4,7 +4,7 @@ class ApiConfig {
   /// update this URL or pass `--dart-define=API_URL=https://your-server-url.com` during build.
   static const String serverUrl = String.fromEnvironment(
     'API_URL',
-    defaultValue: 'http://localhost:3001',
+    defaultValue: 'https://soundifly.onrender.com',
   );
 
   static String get baseUrl => '$serverUrl/api';
