@@ -1,0 +1,12 @@
+.git
+.dart_tool
+build
+android
+ios
+web
+windows
+*.apk
+*.aab
+server/node_modules
+server/yt-dlp.exe
+node_modules
