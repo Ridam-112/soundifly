@@ -1,6 +1,6 @@
-FROM node:20-bullseye-slim
+FROM node:20-bookworm-slim
 
-# Install python3, ffmpeg and yt-dlp for audio streaming
+# Install python3, ffmpeg, curl and download latest yt-dlp binary
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     ffmpeg \
