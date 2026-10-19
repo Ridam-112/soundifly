@@ -116,16 +116,29 @@ app.get('/api/debug-stream/:videoId', (req, res) => {
   const videoId = req.params.videoId;
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const bin = getYtDlpBin();
-  const cmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android,web" --force-ipv4 -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
+  const cmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android" -g -f 18/ba/b "${videoUrl}"`;
 
-  exec(cmd, { timeout: 25000 }, (error, stdout, stderr) => {
+  exec(cmd, { timeout: 15000 }, (error, stdout, stderr) => {
     res.json({
       bin,
       binExists: fs.existsSync(bin),
       cmd,
+      killed: error?.killed,
+      signal: error?.signal,
       error: error ? error.message : null,
       stdout: stdout ? stdout.trim() : null,
       stderr: stderr ? stderr.trim() : null
+    });
+  });
+});
+
+app.get('/api/ytdl-version', (req, res) => {
+  const bin = getYtDlpBin();
+  exec(`"${bin}" --version`, { timeout: 5000 }, (error, stdout, stderr) => {
+    res.json({
+      bin,
+      version: stdout ? stdout.trim() : null,
+      error: error ? error.message : null
     });
   });
 });
