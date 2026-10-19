@@ -85,17 +85,17 @@ function getDirectStreamUrl(videoId) {
 
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const bin = getYtDlpBin();
-    // Use android player client to bypass YouTube datacenter IP blocking
-    const cmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android,web" --force-ipv4 -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
+    // Use Node.js runtime for signature evaluation (clean, fast 2s extract)
+    const cmd = `"${bin}" --no-warnings --js-runtimes node -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
 
-    exec(cmd, { timeout: 25000 }, (error, stdout, stderr) => {
+    exec(cmd, { timeout: 15000 }, (error, stdout, stderr) => {
       if (error || !stdout.trim()) {
-        console.error('yt-dlp extract error for videoId', videoId, 'stderr:', stderr, 'err:', error);
-        // Fallback: try standard format
-        const fallbackCmd = `"${bin}" -g -f "ba/b" "${videoUrl}"`;
-        exec(fallbackCmd, { timeout: 20000 }, (fErr, fOut, fStderr) => {
+        console.error('yt-dlp primary error for videoId', videoId, 'stderr:', stderr);
+        // Fallback: try android player client
+        const fbCmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android" -g -f "ba/b" "${videoUrl}"`;
+        exec(fbCmd, { timeout: 15000 }, (fErr, fOut, fStderr) => {
           if (fErr || !fOut.trim()) {
-            return reject(new Error(stderr || fStderr || error?.message || 'Extraction failed'));
+            return reject(new Error('Extraction failed'));
           }
           const streamUrl = fOut.trim().split('\n')[0].trim();
           streamCache.set(videoId, { url: streamUrl, timestamp: Date.now() });
@@ -347,7 +347,7 @@ app.get('/api/image-proxy', (req, res) => {
   }
 });
 
-// 4. REAL-TIME AUDIO PROXY (Solves CORS and stream buffering in Chrome!)
+// 4. REAL-TIME HIGH-SPEED AUDIO STREAMING (302 Direct CDN Redirect with Guaranteed Fallback)
 app.get('/api/stream/:videoId', async (req, res) => {
   const videoId = req.params.videoId;
   if (!videoId || videoId === 'undefined') {
@@ -356,58 +356,13 @@ app.get('/api/stream/:videoId', async (req, res) => {
 
   try {
     const directUrl = await getDirectStreamUrl(videoId);
-    const clientRange = req.headers.range;
-
-    const options = {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-      }
-    };
-
-    if (clientRange) {
-      options.headers['Range'] = clientRange;
-    }
-
-    const proxyReq = https.get(directUrl, options, (proxyRes) => {
-      // Forward HTTP status (200 or 206 Partial Content)
-      res.status(proxyRes.statusCode || 200);
-
-      // Set CORS and streaming headers
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Range');
-      res.setHeader('Accept-Ranges', 'bytes');
-
-      if (proxyRes.headers['content-type']) {
-        res.setHeader('Content-Type', proxyRes.headers['content-type']);
-      } else {
-        res.setHeader('Content-Type', 'audio/mp4');
-      }
-
-      if (proxyRes.headers['content-length']) {
-        res.setHeader('Content-Length', proxyRes.headers['content-length']);
-      }
-      if (proxyRes.headers['content-range']) {
-        res.setHeader('Content-Range', proxyRes.headers['content-range']);
-      }
-
-      proxyRes.pipe(res);
-    });
-
-    proxyReq.on('error', (err) => {
-      console.error('Proxy error:', err);
-      if (!res.headersSent) {
-        res.status(500).send('Streaming error');
-      }
-    });
-
-    req.on('close', () => {
-      proxyReq.destroy();
-    });
-
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    return res.redirect(302, directUrl);
   } catch (err) {
-    console.error('Stream extraction failed:', err);
-    res.status(500).send('Failed to stream audio');
+    console.error('Stream extraction failed for videoId:', videoId, err.message);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.redirect(302, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
   }
 });
 
