@@ -1,0 +1,16 @@
+name: Soundifly Render Keep Alive
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render free instance from spinning down (sleeps after 15m)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Soundifly Server
+        run: |
+          echo "Pinging Soundifly Render backend..."
+          curl -s -o /dev/null -w "Status: %{http_code}\n" https://soundifly.onrender.com/health || true
