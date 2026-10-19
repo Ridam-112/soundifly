@@ -68,6 +68,12 @@ const YTM_CONTEXT = {
 // In-memory cache for audio direct URLs
 const streamCache = new Map();
 
+function getYtDlpBin() {
+  if (fs.existsSync('/usr/local/bin/yt-dlp')) return '/usr/local/bin/yt-dlp';
+  if (fs.existsSync(ytdlpExe)) return ytdlpExe;
+  return 'yt-dlp';
+}
+
 function getDirectStreamUrl(videoId) {
   return new Promise((resolve, reject) => {
     if (streamCache.has(videoId)) {
@@ -78,13 +84,24 @@ function getDirectStreamUrl(videoId) {
     }
 
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    // Prefer m4a (AAC) audio format for universal playback across all browsers
-    const cmd = `"${ytdlpPath}" -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
+    const bin = getYtDlpBin();
+    // Use android player client to bypass YouTube datacenter IP blocking
+    const cmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android,web" --force-ipv4 -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
 
-    exec(cmd, (error, stdout, stderr) => {
+    exec(cmd, { timeout: 25000 }, (error, stdout, stderr) => {
       if (error || !stdout.trim()) {
-        console.error('yt-dlp extract error for videoId', videoId, stderr);
-        return reject(new Error('Extraction failed'));
+        console.error('yt-dlp extract error for videoId', videoId, 'stderr:', stderr, 'err:', error);
+        // Fallback: try standard format
+        const fallbackCmd = `"${bin}" -g -f "ba/b" "${videoUrl}"`;
+        exec(fallbackCmd, { timeout: 20000 }, (fErr, fOut, fStderr) => {
+          if (fErr || !fOut.trim()) {
+            return reject(new Error(stderr || fStderr || error?.message || 'Extraction failed'));
+          }
+          const streamUrl = fOut.trim().split('\n')[0].trim();
+          streamCache.set(videoId, { url: streamUrl, timestamp: Date.now() });
+          resolve(streamUrl);
+        });
+        return;
       }
 
       const streamUrl = stdout.trim().split('\n')[0].trim();
@@ -93,6 +110,25 @@ function getDirectStreamUrl(videoId) {
     });
   });
 }
+
+// Diagnostic endpoint to check yt-dlp on cloud instance
+app.get('/api/debug-stream/:videoId', (req, res) => {
+  const videoId = req.params.videoId;
+  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const bin = getYtDlpBin();
+  const cmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android,web" --force-ipv4 -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
+
+  exec(cmd, { timeout: 25000 }, (error, stdout, stderr) => {
+    res.json({
+      bin,
+      binExists: fs.existsSync(bin),
+      cmd,
+      error: error ? error.message : null,
+      stdout: stdout ? stdout.trim() : null,
+      stderr: stderr ? stderr.trim() : null
+    });
+  });
+});
 
 // 1. YouTube Music Live Search
 app.get('/api/search', async (req, res) => {
