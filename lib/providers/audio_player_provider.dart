@@ -276,7 +276,7 @@ class AudioPlayerProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> loadLyricsForCurrentSong() async {
+  Future<void> loadLyricsForCurrentSong({bool forceRefresh = false}) async {
     final song = _currentSong;
     if (song == null) return;
 
@@ -285,7 +285,7 @@ class AudioPlayerProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final lyrics = await LyricsService.getLyrics(song);
+      final lyrics = await LyricsService.getLyrics(song, forceRefresh: forceRefresh);
       if (_currentSong?.id == song.id) {
         _currentLyrics = lyrics;
         _isLoadingLyrics = false;

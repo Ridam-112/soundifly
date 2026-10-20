@@ -43,6 +43,8 @@ dependencies:
   http: ^1.6.0
   supabase_flutter: ^2.8.4
   audio_service: ^0.18.19
+  share_plus: ^13.3.1
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:

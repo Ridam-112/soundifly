@@ -4,6 +4,7 @@ import 'package:flutter/rendering.dart';
 import '../models/song.dart';
 import '../providers/audio_player_provider.dart';
 import '../theme/app_theme.dart';
+import 'song_share_modal.dart';
 
 class LyricsViewerWidget extends StatefulWidget {
   final Song song;
@@ -148,9 +149,9 @@ class _LyricsViewerWidgetState extends State<LyricsViewerWidget> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const SizedBox(
-              width: 32,
-              height: 32,
-              child: CircularProgressIndicator(color: AppColors.primary, strokeWidth: 2.5),
+              width: 34,
+              height: 34,
+              child: CircularProgressIndicator(color: AppColors.primary, strokeWidth: 2.8),
             ),
             const SizedBox(height: 16),
             const Text(
@@ -169,21 +170,38 @@ class _LyricsViewerWidgetState extends State<LyricsViewerWidget> {
 
     if (lyrics.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.music_note_rounded, size: 54, color: AppColors.textMuted),
-            const SizedBox(height: 12),
-            const Text(
-              'No lyrics found for this song',
-              style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Enjoy the pure melody of "${widget.song.title}"',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.music_note_rounded, size: 54, color: AppColors.textMuted),
+              const SizedBox(height: 12),
+              const Text(
+                'No lyrics found for this song',
+                style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Enjoy the melody of "${widget.song.title}"',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () {
+                  widget.player.loadLyricsForCurrentSong(forceRefresh: true);
+                },
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Search Again'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -211,93 +229,155 @@ class _LyricsViewerWidgetState extends State<LyricsViewerWidget> {
         // Vertical padding allows both the first and last line to sit right in the center of the viewport
         final verticalPadding = constraints.maxHeight * 0.42;
 
-        return NotificationListener<UserScrollNotification>(
-          onNotification: (notification) {
-            // When user scrolls manually, pause auto-scroll temporarily so it doesn't fight the user's gesture
-            if (notification.direction != ScrollDirection.idle) {
-              _isUserScrolling = true;
-              _userScrollResumeTimer?.cancel();
-              _userScrollResumeTimer = Timer(const Duration(seconds: 3), () {
-                if (mounted) {
-                  setState(() {
-                    _isUserScrolling = false;
-                    _lastActiveIndex = -1; // Trigger immediate re-centering
+        return Stack(
+          children: [
+            NotificationListener<UserScrollNotification>(
+              onNotification: (notification) {
+                // When user scrolls manually, pause auto-scroll temporarily so it doesn't fight the user's gesture
+                if (notification.direction != ScrollDirection.idle) {
+                  _isUserScrolling = true;
+                  _userScrollResumeTimer?.cancel();
+                  _userScrollResumeTimer = Timer(const Duration(seconds: 3), () {
+                    if (mounted) {
+                      setState(() {
+                        _isUserScrolling = false;
+                        _lastActiveIndex = -1; // Trigger immediate re-centering
+                      });
+                    }
                   });
                 }
-              });
-            }
-            return false;
-          },
-          child: SingleChildScrollView(
-            controller: _scrollController,
-            physics: const BouncingScrollPhysics(),
-            padding: EdgeInsets.symmetric(horizontal: 24, vertical: verticalPadding),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: List.generate(lyrics.length, (index) {
-                _itemKeys[index] ??= GlobalKey();
-                final line = lyrics[index];
-                final isActive = index == activeIndex;
-                final isPassed = activeIndex != -1 && index < activeIndex;
+                return false;
+              },
+              child: SingleChildScrollView(
+                controller: _scrollController,
+                physics: const BouncingScrollPhysics(),
+                padding: EdgeInsets.symmetric(horizontal: 24, vertical: verticalPadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: List.generate(lyrics.length, (index) {
+                    _itemKeys[index] ??= GlobalKey();
+                    final line = lyrics[index];
+                    final isActive = index == activeIndex;
+                    final isPassed = activeIndex != -1 && index < activeIndex;
 
-                return GestureDetector(
-                  key: _itemKeys[index],
-                  onTap: () {
-                    // Tap any lyric to seek to that line and center immediately
-                    _isUserScrolling = false;
-                    _userScrollResumeTimer?.cancel();
-                    widget.player.seekTo(line.timestamp);
-                    _lastActiveIndex = -1;
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) {
-                        _scrollToActiveLine(index);
-                      }
-                    });
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeOutCubic,
-                    margin: const EdgeInsets.symmetric(vertical: 10),
-                    padding: EdgeInsets.symmetric(
-                      horizontal: isActive ? 16 : 8,
-                      vertical: isActive ? 12 : 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isActive ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
-                      borderRadius: BorderRadius.circular(16),
-                      border: isActive
-                          ? Border.all(color: AppColors.primary.withValues(alpha: 0.5), width: 1.4)
-                          : null,
-                    ),
-                    child: AnimatedDefaultTextStyle(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOutCubic,
-                      style: TextStyle(
-                        color: isActive
-                            ? AppColors.primary
-                            : (isPassed
-                                ? Colors.white.withValues(alpha: 0.65)
-                                : Colors.white.withValues(alpha: 0.28)),
-                        fontSize: isActive ? 26 : (isPassed ? 18 : 17),
-                        fontWeight: isActive ? FontWeight.w900 : (isPassed ? FontWeight.w600 : FontWeight.w500),
-                        height: 1.35,
-                        shadows: isActive
-                            ? [
-                                Shadow(
-                                  color: AppColors.primary.withValues(alpha: 0.6),
-                                  blurRadius: 16,
-                                ),
-                              ]
-                            : null,
+                    return GestureDetector(
+                      key: _itemKeys[index],
+                      onTap: () {
+                        // Tap any lyric to seek to that line and center immediately
+                        _isUserScrolling = false;
+                        _userScrollResumeTimer?.cancel();
+                        widget.player.seekTo(line.timestamp);
+                        _lastActiveIndex = -1;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            _scrollToActiveLine(index);
+                          }
+                        });
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOutCubic,
+                        margin: const EdgeInsets.symmetric(vertical: 10),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isActive ? 16 : 8,
+                          vertical: isActive ? 12 : 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isActive ? AppColors.primary.withValues(alpha: 0.12) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(16),
+                          border: isActive
+                              ? Border.all(color: AppColors.primary.withValues(alpha: 0.5), width: 1.4)
+                              : null,
+                        ),
+                        child: AnimatedDefaultTextStyle(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeOutCubic,
+                          style: TextStyle(
+                            color: isActive
+                                ? AppColors.primary
+                                : (isPassed
+                                    ? Colors.white.withValues(alpha: 0.65)
+                                    : Colors.white.withValues(alpha: 0.28)),
+                            fontSize: isActive ? 24 : 19,
+                            fontWeight: isActive ? FontWeight.w800 : FontWeight.w600,
+                            height: 1.4,
+                            letterSpacing: -0.2,
+                            shadows: isActive
+                                ? [
+                                    BoxShadow(
+                                      color: AppColors.primary.withValues(alpha: 0.5),
+                                      blurRadius: 18,
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: Text(
+                            line.text,
+                            textAlign: TextAlign.left,
+                          ),
+                        ),
                       ),
-                      textAlign: TextAlign.center,
-                      child: Text(line.text),
+                    );
+                  }),
+                ),
+              ),
+            ),
+
+            // Top Floating Action Bar: Source badge + Share button + Refresh button
+            Positioned(
+              top: 0,
+              left: 20,
+              right: 20,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black45,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.graphic_eq_rounded, color: AppColors.primary, size: 14),
+                        const SizedBox(width: 4),
+                        Text(
+                          widget.player.currentLyrics.isSynced ? 'Synced Lyrics' : 'Plain Lyrics',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
+                        ),
+                      ],
                     ),
                   ),
-                );
-              }),
+                  Row(
+                    children: [
+                      // Share Lyrics button
+                      IconButton(
+                        tooltip: 'Share lyrics card',
+                        icon: const Icon(Icons.share_outlined, color: Colors.white, size: 20),
+                        onPressed: () {
+                          SongShareModal.show(
+                            context,
+                            song: widget.song,
+                            lyrics: widget.player.currentLyrics,
+                            activeLyricIndex: activeIndex,
+                            initialMode: ShareCardMode.lyrics,
+                          );
+                        },
+                      ),
+                      // Refresh lyrics button
+                      IconButton(
+                        tooltip: 'Refresh lyrics',
+                        icon: const Icon(Icons.refresh_rounded, color: Colors.white70, size: 20),
+                        onPressed: () {
+                          widget.player.loadLyricsForCurrentSong(forceRefresh: true);
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
         );
       },
     );

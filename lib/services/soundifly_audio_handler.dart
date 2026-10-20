@@ -9,6 +9,18 @@ class SoundiflyAudioHandler extends BaseAudioHandler with SeekHandler {
   void Function()? onPreviousCallback;
   void Function(Duration position)? onSeekCallback;
 
+  static const Set<MediaAction> _defaultActions = {
+    MediaAction.play,
+    MediaAction.pause,
+    MediaAction.playPause,
+    MediaAction.stop,
+    MediaAction.skipToNext,
+    MediaAction.skipToPrevious,
+    MediaAction.seek,
+    MediaAction.seekForward,
+    MediaAction.seekBackward,
+  };
+
   SoundiflyAudioHandler() {
     playbackState.add(PlaybackState(
       controls: const [
@@ -16,11 +28,7 @@ class SoundiflyAudioHandler extends BaseAudioHandler with SeekHandler {
         MediaControl.play,
         MediaControl.skipToNext,
       ],
-      systemActions: const {
-        MediaAction.seek,
-        MediaAction.seekForward,
-        MediaAction.seekBackward,
-      },
+      systemActions: _defaultActions,
       androidCompactActionIndices: const [0, 1, 2],
       processingState: AudioProcessingState.idle,
       playing: false,
@@ -67,11 +75,7 @@ class SoundiflyAudioHandler extends BaseAudioHandler with SeekHandler {
         if (isPlaying) MediaControl.pause else MediaControl.play,
         MediaControl.skipToNext,
       ],
-      systemActions: const {
-        MediaAction.seek,
-        MediaAction.seekForward,
-        MediaAction.seekBackward,
-      },
+      systemActions: _defaultActions,
       androidCompactActionIndices: const [0, 1, 2],
       processingState: isLoading
           ? AudioProcessingState.buffering
@@ -81,6 +85,26 @@ class SoundiflyAudioHandler extends BaseAudioHandler with SeekHandler {
       bufferedPosition: position,
       speed: 1.0,
     ));
+  }
+
+  @override
+  Future<void> click([MediaButton button = MediaButton.media]) async {
+    // Responds to Bluetooth earbuds / wired headphones single/double/triple taps
+    switch (button) {
+      case MediaButton.media:
+        if (playbackState.value.playing) {
+          await pause();
+        } else {
+          await play();
+        }
+        break;
+      case MediaButton.next:
+        await skipToNext();
+        break;
+      case MediaButton.previous:
+        await skipToPrevious();
+        break;
+    }
   }
 
   @override
