@@ -135,7 +135,12 @@ class AudioPlayerProvider extends ChangeNotifier {
         _isLoading = false;
         _playbackErrorMessage = null;
       }
-      MediaSessionService.updatePlaybackState(isPlaying: _isPlaying);
+      MediaSessionService.updatePlaybackState(
+        isPlaying: _isPlaying,
+        position: _currentPosition,
+        duration: _totalDuration,
+        isLoading: _isLoading,
+      );
       notifyListeners();
       _broadcastSync();
     });
@@ -160,6 +165,7 @@ class AudioPlayerProvider extends ChangeNotifier {
         MediaSessionService.updatePositionState(
           durationSeconds: _totalDuration.inMilliseconds / 1000.0,
           positionSeconds: pos.inMilliseconds / 1000.0,
+          isPlaying: _isPlaying,
         );
         notifyListeners();
       }
@@ -171,6 +177,7 @@ class AudioPlayerProvider extends ChangeNotifier {
         MediaSessionService.updatePositionState(
           durationSeconds: dur.inMilliseconds / 1000.0,
           positionSeconds: _currentPosition.inMilliseconds / 1000.0,
+          isPlaying: _isPlaying,
         );
         notifyListeners();
       }
@@ -214,12 +221,19 @@ class AudioPlayerProvider extends ChangeNotifier {
     _historyRecordedForCurrentTrack = false;
 
     MediaSessionService.updateMetadata(
+      id: song.id,
       title: song.title,
       artist: song.artist,
       album: song.album.isNotEmpty ? song.album : 'Soundifly',
       artworkUrl: song.coverUrl,
+      duration: song.duration,
     );
-    MediaSessionService.updatePlaybackState(isPlaying: true);
+    MediaSessionService.updatePlaybackState(
+      isPlaying: true,
+      position: Duration.zero,
+      duration: song.duration,
+      isLoading: true,
+    );
 
     notifyListeners();
 
@@ -328,11 +342,19 @@ class AudioPlayerProvider extends ChangeNotifier {
     if (_isPlaying) {
       await _player.pause();
       _isPlaying = false;
-      MediaSessionService.updatePlaybackState(isPlaying: false);
+      MediaSessionService.updatePlaybackState(
+        isPlaying: false,
+        position: _currentPosition,
+        duration: _totalDuration,
+      );
     } else {
       await _player.resume();
       _isPlaying = true;
-      MediaSessionService.updatePlaybackState(isPlaying: true);
+      MediaSessionService.updatePlaybackState(
+        isPlaying: true,
+        position: _currentPosition,
+        duration: _totalDuration,
+      );
     }
     notifyListeners();
     _broadcastSync();
@@ -343,6 +365,7 @@ class AudioPlayerProvider extends ChangeNotifier {
     MediaSessionService.updatePositionState(
       durationSeconds: _totalDuration.inMilliseconds / 1000.0,
       positionSeconds: position.inMilliseconds / 1000.0,
+      isPlaying: _isPlaying,
     );
     notifyListeners();
     try {
