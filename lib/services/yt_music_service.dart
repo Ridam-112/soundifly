@@ -65,20 +65,22 @@ class YTMusicService {
     String cleanKey(String t, String a) =>
         '${t.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}::${a.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}';
 
-    // 1. First add JioSaavn tracks (instant 320kbps studio streams with direct CDN playback)
-    for (final s in otherSongs) {
+    // 1. First add YouTube Music tracks (from sigma67/ytmusicapi — real, complete, exhaustive catalog)
+    for (final s in ytmSongs) {
       final k = cleanKey(s.title, s.artist);
-      if (!seen.contains(k)) {
+      if (!seen.contains(k) && !seen.contains(s.id)) {
         seen.add(k);
+        seen.add(s.id);
         combined.add(s);
       }
     }
 
-    // 2. Add YouTube Music tracks (exhaustive worldwide catalog, unreleased, indie bands & live versions)
-    for (final s in ytmSongs) {
+    // 2. Add JioSaavn tracks that are not already present in the catalog
+    for (final s in otherSongs) {
       final k = cleanKey(s.title, s.artist);
-      if (!seen.contains(k)) {
+      if (!seen.contains(k) && !seen.contains(s.id)) {
         seen.add(k);
+        seen.add(s.id);
         combined.add(s);
       }
     }

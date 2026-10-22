@@ -56,24 +56,24 @@ class AudioStreamResolver {
       return cached.url;
     }
 
-    // 3. If it's a JioSaavn song ID — instant DES decrypt
-    if (song.id.startsWith('saavn_')) {
-      final resolved = await _resolveSaavnById(song.id);
-      if (resolved != null) return resolved;
-    }
-
-    // 4. Smart JioSaavn match by title+artist (most reliable, 320kbps AAC = universal playback)
-    final saavnMatch = await _resolveSaavnBySearch(song);
-    if (saavnMatch != null) return saavnMatch;
-
-    // 5. YouTubeExplode for YouTube video IDs (prefer M4A/AAC format)
+    // 3. If it's a YouTube video ID — ALWAYS resolve the EXACT YouTube stream for this video
     final isYtId = RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(song.id);
     if (isYtId) {
       final ytResolved = await _resolveYouTube(song.id);
       if (ytResolved != null) return ytResolved;
     }
 
-    // 6. Return rawUrl if nothing else succeeded
+    // 4. If it's a JioSaavn song ID — instant DES decrypt
+    if (song.id.startsWith('saavn_')) {
+      final resolved = await _resolveSaavnById(song.id);
+      if (resolved != null) return resolved;
+
+      // Smart Saavn search only for Saavn songs whose direct ID lookup failed
+      final saavnMatch = await _resolveSaavnBySearch(song);
+      if (saavnMatch != null) return saavnMatch;
+    }
+
+    // 5. Return rawUrl if nothing else succeeded
     debugPrint('[AudioStreamResolver] All resolvers failed for ${song.id}, using rawUrl');
     return rawUrl;
   }
