@@ -469,6 +469,37 @@ app.get('/api/stream/:videoId', async (req, res) => {
     console.error('Stream extraction failed for videoId:', videoId, err.message);
   }
 
+  // 3b. Resilient Server Fallback: resolve song metadata via YouTube oEmbed and match on JioSaavn (320kbps CD Quality)
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+    const oeRes = await fetch(oembedUrl, { signal: AbortSignal.timeout(3500) });
+    if (oeRes.ok) {
+      const oeData = await oeRes.json();
+      const rawTitle = (oeData.title || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
+      const rawAuthor = (oeData.author_name || '').replace(/ - Topic$/i, '').trim();
+      const cleanQ = `${rawTitle} ${rawAuthor}`.trim();
+      if (cleanQ.length > 2) {
+        const saavnResults = await searchSaavn(cleanQ);
+        for (const item of saavnResults) {
+          const sTitle = (item.song || item.title || '').toLowerCase().trim();
+          const qTitle = rawTitle.toLowerCase().trim();
+          // Verify title overlap to avoid wrong song substitution
+          if (sTitle.length > 2 && (sTitle.includes(qTitle) || qTitle.includes(sTitle))) {
+            const decUrl = decryptSaavnMediaUrl(item.encrypted_media_url);
+            if (decUrl) {
+              streamCache.set(videoId, { url: decUrl, timestamp: Date.now() });
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+              return res.redirect(302, decUrl);
+            }
+          }
+        }
+      }
+    }
+  } catch (oeErr) {
+    console.error('oEmbed Saavn fallback error:', oeErr.message);
+  }
+
   // 4. Guaranteed fallback stream (audio will ALWAYS play without crashing)
   res.setHeader('Access-Control-Allow-Origin', '*');
   return res.redirect(302, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');

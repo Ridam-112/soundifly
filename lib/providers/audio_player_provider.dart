@@ -90,6 +90,7 @@ class AudioPlayerProvider extends ChangeNotifier {
 
   void _initAudioPlayer() {
     try {
+      _player.setReleaseMode(ReleaseMode.stop);
       AudioPlayer.global.setAudioContext(
         AudioContext(
           android: const AudioContextAndroid(
@@ -236,18 +237,16 @@ class AudioPlayerProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _player.stop();
       final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
       debugPrint('[AudioPlayerProvider] Starting playback: $playableUrl');
-      await _player.setSource(UrlSource(playableUrl));
-      await _player.resume();
+      await _player.play(UrlSource(playableUrl));
       _isPlaying = true;
       _isLoading = false;
       _playbackErrorMessage = null;
     } catch (e) {
       debugPrint('Initial play attempt: $e');
       try {
-        await Future.delayed(const Duration(milliseconds: 600));
+        await Future.delayed(const Duration(milliseconds: 300));
         final fallbackUrl = await AudioStreamResolver.resolveStreamUrl(song);
         await _player.play(UrlSource(fallbackUrl));
         _isPlaying = true;

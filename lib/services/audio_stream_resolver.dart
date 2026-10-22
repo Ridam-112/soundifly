@@ -38,9 +38,9 @@ class AudioStreamResolver {
   /// Priority order:
   /// 1. Already-direct CDN URLs (instant)
   /// 2. In-memory cache (instant)
-  /// 3. JioSaavn DES decrypt for saavn_ IDs (instant, 320kbps AAC)
-  /// 4. JioSaavn smart title+artist search (320kbps AAC - universal format)
-  /// 5. YouTubeExplode on-device extraction (prefer M4A/AAC over webm)
+  /// 3. YouTube video ID -> on-device extraction via YouTubeExplode (prefer M4A/AAC, 10s timeout)
+  /// 4. Resilient Fallback: JioSaavn strict match (>= 0.75 token similarity, keeps Royaa Main distinct)
+  /// 5. JioSaavn DES decrypt for saavn_ IDs (instant, 320kbps AAC)
   /// 6. Original URL fallback
   static Future<String> resolveStreamUrl(Song song) async {
     final rawUrl = song.audioUrl.trim();
@@ -56,24 +56,35 @@ class AudioStreamResolver {
       return cached.url;
     }
 
-    // 3. If it's a YouTube video ID — ALWAYS resolve the EXACT YouTube stream for this video
+    // 3. If it's a YouTube video ID — resolve the EXACT YouTube stream
     final isYtId = RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(song.id);
     if (isYtId) {
       final ytResolved = await _resolveYouTube(song.id);
-      if (ytResolved != null) return ytResolved;
+      if (ytResolved != null && ytResolved.isNotEmpty) {
+        return ytResolved;
+      }
+
+      // If YouTube direct extraction timed out or was throttled on mobile carrier,
+      // fallback to strict title+artist matching on JioSaavn (320kbps)
+      final saavnMatch = await _resolveSaavnStrictMatch(song);
+      if (saavnMatch != null && saavnMatch.isNotEmpty) {
+        return saavnMatch;
+      }
     }
 
     // 4. If it's a JioSaavn song ID — instant DES decrypt
     if (song.id.startsWith('saavn_')) {
       final resolved = await _resolveSaavnById(song.id);
       if (resolved != null) return resolved;
-
-      // Smart Saavn search only for Saavn songs whose direct ID lookup failed
-      final saavnMatch = await _resolveSaavnBySearch(song);
-      if (saavnMatch != null) return saavnMatch;
     }
 
-    // 5. Return rawUrl if nothing else succeeded
+    // 5. Strict Saavn matching fallback for any track
+    final saavnMatch = await _resolveSaavnStrictMatch(song);
+    if (saavnMatch != null && saavnMatch.isNotEmpty) {
+      return saavnMatch;
+    }
+
+    // 6. Return rawUrl if nothing else succeeded
     debugPrint('[AudioStreamResolver] All resolvers failed for ${song.id}, using rawUrl');
     return rawUrl;
   }
@@ -105,23 +116,76 @@ class AudioStreamResolver {
     return null;
   }
 
-  /// Search JioSaavn by title+artist and decrypt the first match
-  static Future<String?> _resolveSaavnBySearch(Song song) async {
+  /// Helper to normalize strings for robust fuzzy-proof matching
+  static String _normalizeTitle(String str) {
+    return str
+        .toLowerCase()
+        .replaceAll(RegExp(r'\(.*?\)'), '') // Remove (Official Video), (From ...), (Audio)
+        .replaceAll(RegExp(r'\[.*?\]'), '') // Remove [Lofi], [Remix]
+        .replaceAll(RegExp(r'[^a-z0-9\s]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  /// Checks if two tokens represent the same word (e.g., phonetic variants of roya/royaa/royaan)
+  static bool _wordsMatch(String w1, String w2) {
+    if (w1 == w2) return true;
+    const royaVariants = {'roya', 'royaa', 'royaan'};
+    if (royaVariants.contains(w1) && royaVariants.contains(w2)) return true;
+    return false;
+  }
+
+  /// Strict token-overlap similarity between two titles (0.0 to 1.0)
+  static double _computeSimilarity(String a, String b) {
+    final normA = _normalizeTitle(a);
+    final normB = _normalizeTitle(b);
+    if (normA.isEmpty || normB.isEmpty) return 0.0;
+    if (normA == normB) return 1.0;
+
+    final tokensA = normA.split(' ').where((s) => s.isNotEmpty).toList();
+    final tokensB = normB.split(' ').where((s) => s.isNotEmpty).toList();
+    if (tokensA.isEmpty || tokensB.isEmpty) return 0.0;
+
+    int matches = 0;
+    for (final t in tokensA) {
+      if (tokensB.any((u) => _wordsMatch(t, u))) {
+        matches++;
+      }
+    }
+    return matches / (tokensA.length > tokensB.length ? tokensA.length : tokensB.length);
+  }
+
+  /// Search JioSaavn and only accept tracks with strict token match (>= 0.75 similarity).
+  /// This ensures "Royaa Main" will match "Main Royaan" (100% token overlap)
+  /// and NEVER match "Maine Royaan" (50% overlap, strictly rejected).
+  static Future<String?> _resolveSaavnStrictMatch(Song song) async {
     try {
       final searchQ = '${song.title} ${song.artist}'.replaceAll(RegExp(r'\s+'), ' ').trim();
       if (searchQ.length < 2) return null;
       final uri = Uri.parse(
-        'https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&n=3&p=1&q=${Uri.encodeComponent(searchQ)}',
+        'https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&n=10&p=1&q=${Uri.encodeComponent(searchQ)}',
       );
       final res = await http.get(uri, headers: _saavnHeaders).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final data = jsonDecode(utf8.decode(res.bodyBytes));
         final list = data['results'] as List? ?? [];
         for (final item in list) {
-          if (item is Map) {
+          if (item is! Map) continue;
+          final saavnTitle = (item['song'] ?? item['title'] ?? '').toString();
+          final saavnArtist = (item['primary_artists'] ?? item['singers'] ?? '').toString();
+
+          final sim = _computeSimilarity(song.title, saavnTitle);
+          if (sim >= 0.75) {
+            // Also check artist overlap if both are present
+            if (song.artist.isNotEmpty && saavnArtist.isNotEmpty) {
+              final artistSim = _computeSimilarity(song.artist, saavnArtist);
+              if (artistSim < 0.25) continue; // Different artist, reject
+            }
+
             final enc = item['encrypted_media_url']?.toString();
             final direct = decryptSaavnUrl(enc);
             if (direct != null && direct.isNotEmpty) {
+              debugPrint('[AudioStreamResolver] Strict Saavn match (${(sim * 100).toInt()}%): "$saavnTitle" for "${song.title}"');
               _urlCache[song.id] = _CachedUrl(direct);
               return direct;
             }
@@ -129,7 +193,7 @@ class AudioStreamResolver {
         }
       }
     } catch (e) {
-      debugPrint('[AudioStreamResolver] Saavn search error: $e');
+      debugPrint('[AudioStreamResolver] Saavn strict search error: $e');
     }
     return null;
   }
@@ -137,7 +201,7 @@ class AudioStreamResolver {
   /// Extract YouTube audio stream on-device, preferring M4A/AAC (universal) over webm/opus
   static Future<String?> _resolveYouTube(String videoId) async {
     try {
-      final manifest = await _yt.videos.streamsClient.getManifest(videoId).timeout(const Duration(seconds: 6));
+      final manifest = await _yt.videos.streamsClient.getManifest(videoId).timeout(const Duration(seconds: 10));
       final audioStreams = manifest.audioOnly.toList();
 
       if (audioStreams.isEmpty) return null;
