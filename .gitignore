@@ -55,3 +55,10 @@ app.*.map.json
 node_modules/
 server/node_modules/
 server/yt-dlp.exe
+
+# Temporary scratch & test probes
+scratch/
+test/des_test.dart
+test/stream_resolver_test.dart
+test/yt_explode_test.dart
+server/test_*.mjs

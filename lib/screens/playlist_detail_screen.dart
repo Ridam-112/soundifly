@@ -1,13 +1,16 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/playlist.dart';
 import '../models/song.dart';
 import '../providers/audio_player_provider.dart';
 import '../providers/playlist_provider.dart';
-import '../data/authorized_tracks.dart';
+import '../providers/user_settings_provider.dart';
+import '../services/yt_music_service.dart';
 import '../data/mock_data.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_network_image.dart';
+import '../widgets/add_to_playlist_sheet.dart';
 
 class PlaylistDetailScreen extends StatefulWidget {
   final Playlist playlist;
@@ -296,18 +299,40 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
           // Song List or Empty State
           if (currentPlaylist.songs.isEmpty)
-            const SliverFillRemaining(
+            SliverFillRemaining(
               hasScrollBody: false,
               child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.music_note_rounded, size: 64, color: AppColors.textMuted),
-                    SizedBox(height: 12),
-                    Text('No songs in this playlist yet', style: TextStyle(color: AppColors.textSecondary, fontSize: 15)),
-                    SizedBox(height: 4),
-                    Text('Tap "Add Songs" above to add your favorite tracks', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.music_note_rounded, size: 64, color: AppColors.textMuted),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'No songs in this playlist yet',
+                        style: TextStyle(color: AppColors.textSecondary, fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Search and add tracks based on your taste',
+                        style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                      ),
+                      const SizedBox(height: 20),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          elevation: 4,
+                        ),
+                        icon: const Icon(Icons.add_rounded, size: 20),
+                        label: const Text('Add Songs', style: TextStyle(fontWeight: FontWeight.bold)),
+                        onPressed: () => _showAddSongDialog(context, playlistProv, currentPlaylist),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             )
@@ -409,12 +434,15 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                             onSelected: (val) {
                               if (val == 'play_next') {
                                 player.playNext(song);
+                              } else if (val == 'add_to_playlist') {
+                                AddToPlaylistSheet.show(context, song);
                               } else if (val == 'remove' && isOwner) {
                                 playlistProv.removeSongFromPlaylist(currentPlaylist.id, song.id);
                               }
                             },
                             itemBuilder: (ctx) => [
                               const PopupMenuItem(value: 'play_next', child: Text('Play Next', style: TextStyle(color: Colors.white))),
+                              const PopupMenuItem(value: 'add_to_playlist', child: Text('Add to another Playlist', style: TextStyle(color: Colors.white))),
                               if (isOwner)
                                 const PopupMenuItem(value: 'remove', child: Text('Remove from Playlist', style: TextStyle(color: AppColors.error))),
                             ],
@@ -612,64 +640,376 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   }
 
   void _showAddSongDialog(BuildContext context, PlaylistProvider playlistProv, Playlist playlist) {
-    // Combine authorized catalog and mock songs
-    final allAvailable = <Song>[
-      ...AuthorizedMusicCatalog.demoAuthorizedSongs,
-      ...MockData.allSongs,
-    ];
-    final Set<String> seenIds = {};
-    final deduplicated = allAvailable.where((s) => seenIds.add(s.id)).toList();
-
     showModalBottomSheet(
       context: context,
-      backgroundColor: AppColors.bgSurface,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(16),
-        height: 440,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Add Songs to Playlist', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ListView.builder(
-                itemCount: deduplicated.length,
-                itemBuilder: (c, i) {
-                  final s = deduplicated[i];
-                  final isAlreadyIn = playlist.songs.any((x) => x.id == s.id);
+      isScrollControlled: true,
+      backgroundColor: AppColors.bgDark,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (ctx) => _AddSongsBottomSheet(
+        playlist: playlist,
+        playlistProv: playlistProv,
+      ),
+    );
+  }
+}
 
-                  return ListTile(
-                    leading: AppNetworkImage(
-                      url: s.coverUrl,
-                      width: 40,
-                      height: 40,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    title: Text(s.title, maxLines: 1, style: const TextStyle(color: Colors.white, fontSize: 14)),
-                    subtitle: Text(s.artist, maxLines: 1, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                    trailing: isAlreadyIn
-                        ? const Icon(Icons.check_circle, color: AppColors.success)
-                        : IconButton(
-                            icon: const Icon(Icons.add_circle_outline, color: AppColors.primary),
+class _AddSongsBottomSheet extends StatefulWidget {
+  final Playlist playlist;
+  final PlaylistProvider playlistProv;
+
+  const _AddSongsBottomSheet({
+    required this.playlist,
+    required this.playlistProv,
+  });
+
+  @override
+  State<_AddSongsBottomSheet> createState() => _AddSongsBottomSheetState();
+}
+
+class _AddSongsBottomSheetState extends State<_AddSongsBottomSheet> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  List<Song> _results = [];
+  bool _isLoading = true;
+  String _activeChip = 'Recommended';
+  Timer? _debounceTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialSongs();
+  }
+
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadInitialSongs() async {
+    setState(() => _isLoading = true);
+    final settingsProv = context.read<UserSettingsProvider>();
+
+    String initialQuery;
+    if (settingsProv.preferredLanguages.isNotEmpty) {
+      initialQuery = '${settingsProv.preferredLanguages.first} Top Hits';
+    } else if (settingsProv.favoriteArtists.isNotEmpty) {
+      initialQuery = settingsProv.favoriteArtists.first;
+    } else {
+      initialQuery = 'Top Trending Songs';
+    }
+
+    try {
+      final songs = await YTMusicService.search(initialQuery);
+      if (mounted) {
+        setState(() {
+          _results = songs.isNotEmpty ? songs : MockData.allSongs;
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _results = MockData.allSongs;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _onSearchChanged(String text) {
+    _debounceTimer?.cancel();
+    if (text.trim().isEmpty) {
+      _loadInitialSongs();
+      return;
+    }
+
+    _debounceTimer = Timer(const Duration(milliseconds: 350), () async {
+      setState(() => _isLoading = true);
+      try {
+        final songs = await YTMusicService.search(text.trim());
+        if (mounted) {
+          setState(() {
+            _results = songs;
+            _isLoading = false;
+          });
+        }
+      } catch (_) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+      }
+    });
+  }
+
+  Future<void> _onChipSelected(String label) async {
+    setState(() {
+      _activeChip = label;
+      _searchCtrl.clear();
+      _isLoading = true;
+    });
+
+    final query = label == 'Recommended' ? 'Top Trending Songs' : '$label Hits';
+    try {
+      final songs = await YTMusicService.search(query);
+      if (mounted) {
+        setState(() {
+          _results = songs.isNotEmpty ? songs : MockData.allSongs;
+          _isLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _results = MockData.allSongs;
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settingsProv = context.watch<UserSettingsProvider>();
+    final chips = <String>[
+      'Recommended',
+      ...settingsProv.preferredLanguages,
+      ...settingsProv.favoriteArtists,
+    ];
+
+    // Grab updated playlist to reflect real-time song additions
+    final currentPlaylist = widget.playlistProv.playlists.firstWhere(
+      (p) => p.id == widget.playlist.id,
+      orElse: () => widget.playlist,
+    );
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (sheetCtx, scrollController) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Handle
+              const SizedBox(height: 12),
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Title
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Add Songs to Playlist',
+                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Colors.white),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(sheetCtx),
+                    child: const Text('Done', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+
+              // Search Input Field
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.bgSurface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                ),
+                child: TextField(
+                  controller: _searchCtrl,
+                  onChanged: _onSearchChanged,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary, size: 20),
+                    hintText: 'Search any song, artist, or album...',
+                    hintStyle: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                    suffixIcon: _searchCtrl.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear_rounded, color: Colors.white70, size: 18),
                             onPressed: () {
-                              playlistProv.addSongToPlaylist(playlist.id, s);
-                              Navigator.pop(ctx);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  backgroundColor: AppColors.primaryDark,
-                                  content: Text('Added "${s.title}" to playlist!'),
+                              _searchCtrl.clear();
+                              _loadInitialSongs();
+                            },
+                          )
+                        : null,
+                  ),
+                ),
+              ),
+
+              // Horizontal Filter Chips
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 36,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: chips.length,
+                  itemBuilder: (ctx, idx) {
+                    final chipLabel = chips[idx];
+                    final isSelected = _activeChip == chipLabel && _searchCtrl.text.isEmpty;
+
+                    return GestureDetector(
+                      onTap: () => _onChipSelected(chipLabel),
+                      child: Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppColors.primary : AppColors.bgSurface,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: isSelected ? AppColors.primary : Colors.white12,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          chipLabel,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                            color: isSelected ? Colors.white : AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              const Divider(color: Colors.white10, height: 20),
+
+              // Results List
+              Expanded(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                    : _results.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.search_off_rounded, size: 48, color: AppColors.textMuted),
+                                const SizedBox(height: 10),
+                                Text(
+                                  'No songs found matching "${_searchCtrl.text}"',
+                                  style: const TextStyle(color: AppColors.textSecondary),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: scrollController,
+                            itemCount: _results.length,
+                            itemBuilder: (ctx, idx) {
+                              final song = _results[idx];
+                              final isAdded = currentPlaylist.songs.any((s) => s.id == song.id);
+
+                              return Container(
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: isAdded
+                                      ? AppColors.primary.withValues(alpha: 0.1)
+                                      : AppColors.bgSurface,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: isAdded
+                                      ? Border.all(color: AppColors.primary.withValues(alpha: 0.35))
+                                      : null,
+                                ),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                                  leading: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: AppNetworkImage(
+                                      url: song.coverUrl,
+                                      width: 44,
+                                      height: 44,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    song.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${song.artist} • ${song.formattedDuration}',
+                                    maxLines: 1,
+                                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                                  ),
+                                  trailing: isAdded
+                                      ? Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.success.withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(16),
+                                            border: Border.all(color: AppColors.success),
+                                          ),
+                                          child: const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.check_rounded, color: AppColors.success, size: 14),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'Added',
+                                                style: TextStyle(
+                                                  color: AppColors.success,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        )
+                                      : ElevatedButton.icon(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: AppColors.primary,
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                            minimumSize: Size.zero,
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                          ),
+                                          icon: const Icon(Icons.add_rounded, size: 16),
+                                          label: const Text('Add', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                          onPressed: () {
+                                            widget.playlistProv.addSongToPlaylist(widget.playlist.id, song);
+                                            setState(() {});
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(
+                                                backgroundColor: AppColors.primaryDark,
+                                                content: Text('Added "${song.title}"!'),
+                                                duration: const Duration(seconds: 1),
+                                              ),
+                                            );
+                                          },
+                                        ),
                                 ),
                               );
                             },
                           ),
-                  );
-                },
               ),
-            ),
-          ],
-        ),
-      ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

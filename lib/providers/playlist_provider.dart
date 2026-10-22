@@ -26,7 +26,17 @@ class PlaylistProvider extends ChangeNotifier {
 
   List<Playlist> get playlists => _playlists;
   List<Playlist> get publicPlaylists => _playlists.where((p) => p.isPublic).toList();
-  List<Playlist> get myPlaylists => _playlists.where((p) => isOwner(p) && !p.isLikedFolder).toList();
+  List<Playlist> get myPlaylists => _playlists.where((p) {
+    if (p.isLikedFolder) return false;
+    if (isOwner(p)) return true;
+    if (p.isCollaborative) {
+      final user = SupabaseService.isInitialized ? SupabaseService.client.auth.currentUser : null;
+      if (user?.email != null && p.collaboratorEmail != null) {
+        return p.collaboratorEmail!.trim().toLowerCase() == user!.email!.trim().toLowerCase();
+      }
+    }
+    return false;
+  }).toList();
   bool get isLoadingPlaylists => _isLoadingPlaylists;
   LikedSongsSort get likedSortOrder => _likedSortOrder;
 
@@ -64,8 +74,18 @@ class PlaylistProvider extends ChangeNotifier {
   bool isOwner(Playlist playlist) {
     if (playlist.ownerId == 'u_current') return true;
     if (!SupabaseService.isInitialized) return true;
-    final currentUserId = SupabaseService.client.auth.currentUser?.id;
-    return currentUserId != null && playlist.ownerId == currentUserId;
+    final user = SupabaseService.client.auth.currentUser;
+    if (user == null) return false;
+    if (playlist.ownerId == user.id) return true;
+    // Collaborator access check: allowed to edit / add tracks
+    if (playlist.isCollaborative) {
+      if (playlist.collaboratorEmail != null && user.email != null) {
+        if (playlist.collaboratorEmail!.trim().toLowerCase() == user.email!.trim().toLowerCase()) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   void _initDefaultPlaylists() {
@@ -168,6 +188,7 @@ class PlaylistProvider extends ChangeNotifier {
     required PlaylistVisibility visibility,
     String? coverUrl,
     List<Song>? initialSongs,
+    String? collaboratorEmail,
   }) {
     final currentUserId = SupabaseService.isInitialized
         ? (SupabaseService.client.auth.currentUser?.id ?? 'u_current')
@@ -182,8 +203,11 @@ class PlaylistProvider extends ChangeNotifier {
       ownerName: 'You',
       ownerId: currentUserId,
       visibility: visibility,
+      collaboratorEmail: collaboratorEmail?.trim(),
+      collaboratorNames: visibility == PlaylistVisibility.collaborative
+          ? [collaboratorEmail?.trim() ?? 'Partner', 'You']
+          : [],
       songs: initialSongs != null ? List.from(initialSongs) : [],
-      collaboratorNames: visibility == PlaylistVisibility.collaborative ? ['You'] : [],
     );
 
     // Insert right after Liked Songs folder

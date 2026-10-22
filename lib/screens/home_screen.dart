@@ -3,14 +3,22 @@ import 'package:provider/provider.dart';
 import '../providers/audio_player_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../providers/listening_room_provider.dart';
+import '../providers/user_settings_provider.dart';
 import '../services/yt_music_service.dart';
+import '../services/supabase_user_service.dart';
 import '../models/song.dart';
 import '../data/mock_data.dart';
+import '../data/music_onboarding_data.dart';
 import '../theme/app_theme.dart';
 import 'playlist_detail_screen.dart';
 import 'liked_songs_screen.dart';
 import 'listening_history_screen.dart';
+import 'library_screen.dart';
+import 'artist_profile_screen.dart';
+import 'mood_genre_screen.dart';
+import 'onboarding/music_onboarding_screen.dart';
 import '../widgets/app_network_image.dart';
+import '../widgets/add_to_playlist_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,10 +31,20 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Song> _trendingSongs = [];
   bool _isLoadingTrending = true;
 
+  List<Song> _recentlyPlayedSongs = [];
+  bool _isLoadingHistory = false;
+
+  final Map<String, List<Song>> _languageHits = {};
+  List<Song> _madeForYouSongs = [];
+  bool _isLoadingMadeForYou = false;
+
+  String _lastLoadedKey = '';
+
   @override
   void initState() {
     super.initState();
     _loadTrending();
+    _loadRecentlyPlayed();
   }
 
   Future<void> _loadTrending() async {
@@ -39,11 +57,115 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _loadRecentlyPlayed() async {
+    if (_isLoadingHistory) return;
+    setState(() => _isLoadingHistory = true);
+
+    try {
+      final items = await SupabaseUserService.fetchListeningHistory(limit: 10);
+      if (mounted) {
+        setState(() {
+          _recentlyPlayedSongs = items.map((item) => _resolveSong(item)).toList();
+          _isLoadingHistory = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isLoadingHistory = false);
+      }
+    }
+  }
+
+  Song _resolveSong(Map<String, dynamic> item) {
+    final songId = item['song_id']?.toString() ?? '';
+    return MockData.allSongs.firstWhere(
+      (s) => s.id == songId,
+      orElse: () => Song(
+        id: songId,
+        title: item['title']?.toString() ?? 'Unknown Track',
+        artist: item['artist']?.toString() ?? 'Unknown Artist',
+        album: 'Soundifly',
+        coverUrl: item['cover_url']?.toString() ??
+            'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=600&auto=format&fit=crop&q=80',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        duration: Duration(seconds: (item['duration_seconds'] as num?)?.toInt() ?? 180),
+      ),
+    );
+  }
+
+  Future<void> _loadPersonalizedContent(List<String> languages, List<String> favoriteArtists) async {
+    setState(() => _isLoadingMadeForYou = true);
+
+    try {
+      if (favoriteArtists.isNotEmpty) {
+        final query = favoriteArtists.first;
+        final songs = await YTMusicService.search(query);
+        if (mounted) {
+          setState(() {
+            _madeForYouSongs = songs.isNotEmpty ? songs : MockData.allSongs;
+            _isLoadingMadeForYou = false;
+          });
+        }
+      } else if (languages.isNotEmpty) {
+        final query = '${languages.first} Top Hits';
+        final songs = await YTMusicService.search(query);
+        if (mounted) {
+          setState(() {
+            _madeForYouSongs = songs.isNotEmpty ? songs : MockData.allSongs;
+            _isLoadingMadeForYou = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _madeForYouSongs = MockData.allSongs;
+            _isLoadingMadeForYou = false;
+          });
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _madeForYouSongs = MockData.allSongs;
+          _isLoadingMadeForYou = false;
+        });
+      }
+    }
+
+    // Load top tracks for up to 3 selected languages
+    final langsToFetch = languages.take(3).toList();
+    for (final lang in langsToFetch) {
+      if (!_languageHits.containsKey(lang)) {
+        try {
+          final songs = await YTMusicService.search('$lang Hits');
+          if (mounted) {
+            setState(() {
+              _languageHits[lang] = songs.isNotEmpty ? songs : MockData.allSongs;
+            });
+          }
+        } catch (_) {}
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final player = context.read<AudioPlayerProvider>();
     final playlistProv = context.watch<PlaylistProvider>();
     final roomProv = context.watch<ListeningRoomProvider>();
+    final settingsProv = context.watch<UserSettingsProvider>();
+
+    // Detect preference changes and reactively refresh
+    final key = '${settingsProv.preferredLanguages.join(",")}|${settingsProv.favoriteArtists.join(",")}';
+    if (_lastLoadedKey != key) {
+      _lastLoadedKey = key;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _loadPersonalizedContent(settingsProv.preferredLanguages, settingsProv.favoriteArtists);
+          _loadRecentlyPlayed();
+        }
+      });
+    }
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -78,8 +200,16 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.notifications_none_rounded, color: Colors.white),
-                onPressed: () {},
+                icon: const Icon(Icons.tune_rounded, color: Colors.white),
+                tooltip: 'Music Preferences',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const MusicOnboardingScreen(isEditingMode: true),
+                    ),
+                  );
+                },
               ),
               IconButton(
                 icon: const Icon(Icons.history_rounded, color: Colors.white),
@@ -176,17 +306,73 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 12),
                   _buildQuickAccessGrid(context, playlistProv),
 
+                  // Section: Recently Played (if listening history exists)
+                  if (_recentlyPlayedSongs.isNotEmpty) ...[
+                    const SizedBox(height: 28),
+                    _buildSectionHeader(
+                      'Recently Played',
+                      onSeeAll: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ListeningHistoryScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _buildSongHorizontalCarousel(context, player, _recentlyPlayedSongs),
+                  ],
+
+                  // Section: Favourite Artists (from user onboarding preferences)
+                  if (settingsProv.favoriteArtists.isNotEmpty) ...[
+                    const SizedBox(height: 28),
+                    _buildSectionHeader(
+                      'Your Favourite Artists',
+                      onSeeAll: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const MusicOnboardingScreen(isEditingMode: true)),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _buildFavoriteArtistsRow(context, settingsProv.favoriteArtists, player, playlistProv),
+                  ],
+
                   const SizedBox(height: 28),
 
-                  // Section: Made for You (Horizontal Cards)
+                  // Section: Made for You (Personalized based on preferences)
                   _buildSectionHeader('Made For You', onSeeAll: () {}),
                   const SizedBox(height: 12),
                   _buildMadeForYouList(context, player),
 
                   const SizedBox(height: 28),
 
-                  // Section: Trending Now
-                  _buildSectionHeader('Trending Bangladesh & Global', onSeeAll: () {}),
+                  // Section: Daily Mixes & Discover Weekly
+                  _buildSectionHeader('Your Daily Mixes & Discover Weekly', onSeeAll: () {}),
+                  const SizedBox(height: 12),
+                  _buildDailyMixesShelf(context, player, settingsProv),
+
+                  // Section: Language Hits (Bengali Hits, Hindi Hits, English Hits, etc.)
+                  for (final lang in settingsProv.preferredLanguages.take(3)) ...[
+                    const SizedBox(height: 28),
+                    _buildSectionHeader('$lang Hits', onSeeAll: () {}),
+                    const SizedBox(height: 12),
+                    _buildSongHorizontalCarousel(
+                      context,
+                      player,
+                      _languageHits[lang] ?? MockData.allSongs,
+                    ),
+                  ],
+
+                  const SizedBox(height: 28),
+
+                  // Section: Trending Now (Filtered for user preferences)
+                  _buildSectionHeader(
+                    settingsProv.preferredLanguages.isNotEmpty
+                        ? 'Trending in Your Languages'
+                        : 'Trending Bangladesh & Global',
+                    onSeeAll: () {},
+                  ),
                   const SizedBox(height: 12),
                   _buildTrendingList(context, player, playlistProv),
 
@@ -309,7 +495,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: const Icon(Icons.play_arrow_rounded, size: 20),
                 label: const Text('Play Mix'),
                 onPressed: () {
-                  player.playSong(MockData.allSongs.first, playlist: MockData.allSongs);
+                  final mixList = _madeForYouSongs.isNotEmpty ? _madeForYouSongs : MockData.allSongs;
+                  if (mixList.isNotEmpty) {
+                    player.playSong(mixList.first, playlist: mixList);
+                  }
                 },
               ),
             ],
@@ -320,12 +509,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildQuickAccessGrid(BuildContext context, PlaylistProvider playlistProv) {
-    final playlists = playlistProv.playlists.take(4).toList();
+    final userPlaylists = playlistProv.playlists.take(4).toList();
+    final itemCount = userPlaylists.length < 2 ? 2 : userPlaylists.length;
 
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: playlists.length,
+      itemCount: itemCount,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         childAspectRatio: 3.0,
@@ -333,53 +523,98 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisSpacing: 10,
       ),
       itemBuilder: (ctx, idx) {
-        final item = playlists[idx];
-        return GestureDetector(
-          onTap: () {
-            if (item.isLikedFolder) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const LikedSongsScreen()),
-              );
-            } else {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => PlaylistDetailScreen(playlist: item)),
-              );
-            }
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.bgCard,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppColors.borderLight),
-            ),
-            child: Row(
-              children: [
-                AppNetworkImage(
-                  url: item.coverUrl,
-                  width: 54,
-                  height: 54,
-                  borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    item.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
+        if (idx < userPlaylists.length) {
+          final item = userPlaylists[idx];
+          return GestureDetector(
+            onTap: () {
+              if (item.isLikedFolder) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const LikedSongsScreen()),
+                );
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => PlaylistDetailScreen(playlist: item)),
+                );
+              }
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.bgCard,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.borderLight),
+              ),
+              child: Row(
+                children: [
+                  AppNetworkImage(
+                    url: item.coverUrl,
+                    width: 54,
+                    height: 54,
+                    borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      item.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 6),
-              ],
+                  const SizedBox(width: 6),
+                ],
+              ),
             ),
-          ),
-        );
+          );
+        } else {
+          return GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const LibraryScreen()),
+              );
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.bgSurface.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 54,
+                    height: 54,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.15),
+                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
+                    ),
+                    child: const Icon(Icons.add_rounded, color: AppColors.primary, size: 26),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Create Playlist',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ),
+            ),
+          );
+        }
       },
     );
   }
@@ -411,16 +646,413 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildFavoriteArtistsRow(
+    BuildContext context,
+    List<String> favoriteArtists,
+    AudioPlayerProvider player,
+    PlaylistProvider playlistProv,
+  ) {
+    return SizedBox(
+      height: 120,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: favoriteArtists.length,
+        itemBuilder: (ctx, idx) {
+          final artistName = favoriteArtists[idx];
+          // Look up matching artist from verified onboarding catalogue
+          final match = MusicOnboardingData.artists.firstWhere(
+            (a) => a.name.toLowerCase() == artistName.toLowerCase(),
+            orElse: () => OnboardingArtist(
+              id: 'art_$idx',
+              name: artistName,
+              languages: const ['Universal'],
+              genre: 'Music',
+              imageUrl: '',
+            ),
+          );
+
+          return GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ArtistProfileScreen(
+                    artistName: match.name,
+                    initialImageUrl: match.imageUrl,
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              width: 88,
+              margin: const EdgeInsets.only(right: 14),
+              child: Column(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AppColors.primary, width: 2),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: 0.25),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: ClipOval(
+                      child: AppNetworkImage(
+                        url: match.imageUrl,
+                        width: 72,
+                        height: 72,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    match.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showArtistTracksModal(
+    BuildContext context,
+    String artistName,
+    AudioPlayerProvider player,
+    PlaylistProvider playlistProv,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.bgDark,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.65,
+          maxChildSize: 0.9,
+          minChildSize: 0.4,
+          expand: false,
+          builder: (sheetCtx, scrollCtrl) {
+            return FutureBuilder<List<Song>>(
+              future: YTMusicService.search(artistName),
+              builder: (context, snapshot) {
+                final songs = snapshot.data ?? MockData.allSongs.where((s) => s.artist.toLowerCase().contains(artistName.toLowerCase())).toList();
+                final displaySongs = songs.isNotEmpty ? songs : MockData.allSongs;
+
+                return Column(
+                  children: [
+                    const SizedBox(height: 12),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('ARTIST SPOTLIGHT', style: TextStyle(color: AppColors.primary, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                                const SizedBox(height: 2),
+                                Text(
+                                  artistName,
+                                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white),
+                                ),
+                              ],
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            ),
+                            icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                            label: const Text('Play All'),
+                            onPressed: () {
+                              if (displaySongs.isNotEmpty) {
+                                player.playSong(displaySongs.first, playlist: displaySongs);
+                                Navigator.pop(ctx);
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(color: Colors.white12, height: 24),
+                    if (snapshot.connectionState == ConnectionState.waiting)
+                      const Expanded(
+                        child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+                      )
+                    else
+                      Expanded(
+                        child: ListView.builder(
+                          controller: scrollCtrl,
+                          itemCount: displaySongs.length,
+                          itemBuilder: (context, idx) {
+                            final song = displaySongs[idx];
+                            final isPlaying = player.currentSong?.id == song.id && player.isPlaying;
+                            return ListTile(
+                              leading: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: AppNetworkImage(
+                                  url: song.coverUrl,
+                                  width: 44,
+                                  height: 44,
+                                ),
+                              ),
+                              title: Text(
+                                song.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: isPlaying ? AppColors.primary : Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              subtitle: Text(
+                                '${song.artist} • ${song.formattedDuration}',
+                                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                              ),
+                              trailing: IconButton(
+                                icon: Icon(
+                                  isPlaying ? Icons.pause_circle_filled_rounded : Icons.play_circle_filled_rounded,
+                                  color: isPlaying ? AppColors.primary : Colors.white70,
+                                  size: 28,
+                                ),
+                                onPressed: () {
+                                  if (isPlaying) {
+                                    player.togglePlayPause();
+                                  } else {
+                                    player.playSong(song, playlist: displaySongs, startIndex: idx);
+                                  }
+                                },
+                              ),
+                              onTap: () {
+                                player.playSong(song, playlist: displaySongs, startIndex: idx);
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildMadeForYouList(BuildContext context, AudioPlayerProvider player) {
+    if (_isLoadingMadeForYou) {
+      return const SizedBox(
+        height: 210,
+        child: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
+    }
+
+    final songs = _madeForYouSongs.isNotEmpty ? _madeForYouSongs : MockData.allSongs;
+    return _buildSongHorizontalCarousel(context, player, songs);
+  }
+
+  Widget _buildDailyMixesShelf(
+    BuildContext context,
+    AudioPlayerProvider player,
+    UserSettingsProvider settingsProv,
+  ) {
+    final favoriteArtists = settingsProv.favoriteArtists;
+    final preferredLanguages = settingsProv.preferredLanguages;
+    final preferredGenres = settingsProv.preferredGenres;
+
+    final artist1 = favoriteArtists.isNotEmpty ? favoriteArtists.first : 'Arijit Singh';
+    final artist2 = favoriteArtists.length > 1 ? favoriteArtists[1] : 'Shreya Ghoshal';
+    final lang1 = preferredLanguages.isNotEmpty ? preferredLanguages.first : 'Bengali';
+    final genre1 = preferredGenres.isNotEmpty ? preferredGenres.first : 'Romantic';
+
+    final mixes = [
+      {
+        'title': 'Daily Mix 1',
+        'subtitle': '$artist1, $artist2 & more',
+        'query': '$artist1 $artist2 hits',
+        'tag': 'ARTIST MIX',
+        'color1': 0xFF1DB954,
+        'color2': 0xFF121212,
+        'icon': Icons.person_rounded,
+      },
+      {
+        'title': 'Daily Mix 2',
+        'subtitle': '$lang1 Top Melodies & Hits',
+        'query': '$lang1 top hit songs',
+        'tag': 'REGIONAL MIX',
+        'color1': 0xFFFF5722,
+        'color2': 0xFF212121,
+        'icon': Icons.language_rounded,
+      },
+      {
+        'title': 'Daily Mix 3',
+        'subtitle': '$genre1 Vibes & Anthems',
+        'query': '$genre1 songs',
+        'tag': 'MOOD MIX',
+        'color1': 0xFF9C27B0,
+        'color2': 0xFF1A1A2E,
+        'icon': Icons.queue_music_rounded,
+      },
+      {
+        'title': 'Discover Weekly',
+        'subtitle': 'Fresh personalized discoveries',
+        'query': 'new fresh music hits 2026',
+        'tag': 'WEEKLY MIXTAPE',
+        'color1': 0xFF00B0FF,
+        'color2': 0xFF0A192F,
+        'icon': Icons.auto_awesome_rounded,
+      },
+    ];
+
+    return SizedBox(
+      height: 195,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: mixes.length,
+        itemBuilder: (ctx, idx) {
+          final m = mixes[idx];
+          return GestureDetector(
+            onTap: () => _showArtistTracksModal(context, m['query'] as String, player, context.read<PlaylistProvider>()),
+            child: Container(
+              width: 155,
+              margin: const EdgeInsets.only(right: 14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                gradient: LinearGradient(
+                  colors: [Color(m['color1'] as int), Color(m['color2'] as int)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Color(m['color1'] as int).withValues(alpha: 0.35),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+              ),
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          m['tag'] as String,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      Icon(m['icon'] as IconData, color: Colors.white70, size: 20),
+                    ],
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        m['title'] as String,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        m['subtitle'] as String,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.8),
+                          fontSize: 11,
+                          height: 1.3,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: const [
+                          Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 26),
+                          SizedBox(width: 4),
+                          Text(
+                            'Play Mix',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSongHorizontalCarousel(
+    BuildContext context,
+    AudioPlayerProvider player,
+    List<Song> songs,
+  ) {
     return SizedBox(
       height: 210,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        itemCount: MockData.allSongs.length,
+        itemCount: songs.length,
         itemBuilder: (ctx, idx) {
-          final song = MockData.allSongs[idx];
+          final song = songs[idx];
           return GestureDetector(
-            onTap: () => player.playSong(song, playlist: MockData.allSongs, startIndex: idx),
+            onTap: () => player.playSong(song, playlist: songs, startIndex: idx),
             child: Container(
               width: 140,
               margin: const EdgeInsets.only(right: 14),
@@ -558,6 +1190,11 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
+                  icon: const Icon(Icons.playlist_add_rounded, color: AppColors.textSecondary, size: 22),
+                  tooltip: 'Add to Playlist',
+                  onPressed: () => AddToPlaylistSheet.show(context, song),
+                ),
+                IconButton(
                   icon: Icon(
                     isLiked ? Icons.favorite : Icons.favorite_border,
                     color: isLiked ? AppColors.primary : AppColors.textSecondary,
@@ -588,39 +1225,80 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildMoodCards(BuildContext context) {
-    final moods = [
-      {'title': 'Late Night Love ❤️', 'color1': 0xFFFF3366, 'color2': 0xFF990033},
-      {'title': 'Bangla Indie Acoustic ☕', 'color1': 0xFFFF6B00, 'color2': 0xFF993D00},
-      {'title': 'Chill Lo-Fi Beats 🎧', 'color1': 0xFF6C5CE7, 'color2': 0xFF3D2B85},
-      {'title': 'Cyber EDM & Bass 🔥', 'color1': 0xFFFF0055, 'color2': 0xFFFF5500},
-    ];
+    final genres = MusicOnboardingData.availableGenres.take(6).toList();
 
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: moods.length,
+      itemCount: genres.length,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        childAspectRatio: 2.2,
+        childAspectRatio: 2.1,
         crossAxisSpacing: 10,
         mainAxisSpacing: 10,
       ),
       itemBuilder: (ctx, idx) {
-        final m = moods[idx];
-        return Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            gradient: LinearGradient(
-              colors: [Color(m['color1'] as int), Color(m['color2'] as int)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+        final g = genres[idx];
+        return GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MoodGenreScreen(genreMood: g),
+              ),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              gradient: LinearGradient(
+                colors: g.gradient,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: g.gradient.first.withValues(alpha: 0.35),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
             ),
-          ),
-          alignment: Alignment.centerLeft,
-          child: Text(
-            m['title'] as String,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
+            child: Row(
+              children: [
+                Text(g.emoji, style: const TextStyle(fontSize: 24)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        g.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        g.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: Colors.white.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },

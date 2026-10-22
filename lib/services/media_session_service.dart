@@ -46,12 +46,12 @@ class MediaSessionService {
     );
 
     globalAudioHandler?.updateTrackMetadata(
-      id: id ?? '${title}_$artist',
+      id: id ?? globalAudioHandler?.mediaItem.value?.id ?? '${title}_$artist',
       title: title,
       artist: artist,
       album: album,
-      duration: duration ?? Duration.zero,
-      artworkUrl: artworkUrl,
+      duration: duration ?? globalAudioHandler?.mediaItem.value?.duration ?? Duration.zero,
+      artworkUrl: artworkUrl ?? globalAudioHandler?.mediaItem.value?.artUri?.toString(),
     );
   }
 
@@ -91,5 +91,10 @@ class MediaSessionService {
         duration: Duration(milliseconds: (durationSeconds * 1000).toInt()),
       );
     }
+  }
+
+  static void clear() {
+    platform.updateMediaPlaybackState(isPlaying: false);
+    globalAudioHandler?.clearState();
   }
 }

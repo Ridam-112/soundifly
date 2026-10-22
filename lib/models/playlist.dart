@@ -18,6 +18,7 @@ class Playlist {
   final bool isLikedFolder;
   final DateTime createdAt;
   final List<String> collaboratorNames;
+  final String? collaboratorEmail;
 
   Playlist({
     required this.id,
@@ -31,6 +32,7 @@ class Playlist {
     this.isLikedFolder = false,
     DateTime? createdAt,
     this.collaboratorNames = const [],
+    this.collaboratorEmail,
   })  : songs = songs ?? [],
         createdAt = createdAt ?? DateTime.now();
 
@@ -38,6 +40,7 @@ class Playlist {
 
   bool get isPublic => visibility == PlaylistVisibility.public;
   bool get isPrivate => visibility == PlaylistVisibility.private;
+  bool get isCollaborative => visibility == PlaylistVisibility.collaborative;
 
   Duration get totalDuration {
     return songs.fold(
@@ -65,6 +68,22 @@ class Playlist {
     final ownerId = map['user_id']?.toString() ?? 'u_current';
     final isPublic = map['is_public'] as bool? ?? false;
     final isOwner = currentUserId.isNotEmpty && ownerId == currentUserId;
+    final isCollab = map['is_collaborative'] as bool? ??
+        (map['collaborator_email'] != null || map['visibility'] == 'collaborative');
+
+    PlaylistVisibility vis;
+    if (isCollab) {
+      vis = PlaylistVisibility.collaborative;
+    } else if (isPublic) {
+      vis = PlaylistVisibility.public;
+    } else {
+      vis = PlaylistVisibility.private;
+    }
+
+    final collabEmail = map['collaborator_email']?.toString();
+    final List<String> collabNames = map['collaborator_names'] != null
+        ? List<String>.from(map['collaborator_names'])
+        : (collabEmail != null ? [collabEmail, currentUserName] : const []);
 
     return Playlist(
       id: map['id']?.toString() ?? '',
@@ -72,9 +91,11 @@ class Playlist {
       description: map['description']?.toString() ?? '',
       coverUrl: map['cover_url']?.toString() ??
           'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
-      ownerName: isOwner ? currentUserName : 'Soundifly User',
+      ownerName: isOwner ? currentUserName : (map['owner_name']?.toString() ?? 'Soundifly User'),
       ownerId: ownerId,
-      visibility: isPublic ? PlaylistVisibility.public : PlaylistVisibility.private,
+      visibility: vis,
+      collaboratorEmail: collabEmail,
+      collaboratorNames: collabNames,
       songs: songs,
       createdAt: map['created_at'] != null
           ? DateTime.tryParse(map['created_at'].toString())
@@ -90,6 +111,8 @@ class Playlist {
       'description': description,
       'cover_url': coverUrl,
       'is_public': isPublic,
+      'collaborator_email': collaboratorEmail,
+      'is_collaborative': isCollaborative,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
   }
@@ -101,6 +124,7 @@ class Playlist {
     PlaylistVisibility? visibility,
     List<Song>? songs,
     List<String>? collaboratorNames,
+    String? collaboratorEmail,
   }) {
     return Playlist(
       id: id,
@@ -114,6 +138,7 @@ class Playlist {
       isLikedFolder: isLikedFolder,
       createdAt: createdAt,
       collaboratorNames: collaboratorNames ?? this.collaboratorNames,
+      collaboratorEmail: collaboratorEmail ?? this.collaboratorEmail,
     );
   }
 }

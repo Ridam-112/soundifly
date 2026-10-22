@@ -24,9 +24,11 @@ void main() async {
           androidNotificationChannelId: 'com.soundifly.soundifly.channel.audio',
           androidNotificationChannelName: 'Soundifly Music Playback',
           androidNotificationChannelDescription: 'Soundifly Notification Shade and Lock Screen Media Controls',
-          androidNotificationIcon: 'mipmap/ic_launcher',
+          androidNotificationIcon: 'drawable/ic_stat_music',
           androidShowNotificationBadge: true,
+          androidNotificationOngoing: true,
           androidStopForegroundOnPause: true,
+          androidNotificationClickStartsActivity: true,
         ),
       );
     } catch (e) {

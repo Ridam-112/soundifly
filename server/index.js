@@ -8,6 +8,7 @@ import https from 'https';
 import http from 'http';
 import CryptoJS from 'crypto-js';
 import { fetchTheLyricsApi } from './the_lyrics_api.js';
+import { search as ytmSearch, searchArtists as ytmSearchArtists, getWatchPlaylist as ytmGetWatchPlaylist } from './ytmusicapi.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,11 +32,14 @@ app.get('/', (req, res) => {
   res.json({
     status: 'online',
     service: 'Soundifly Music API Engine',
-    version: '1.0.0',
+    version: '1.1.0',
     message: 'Soundifly Backend is running smoothly 🚀',
     endpoints: [
       '/api/trending',
       '/api/search?q={query}',
+      '/api/artists/search?q={query}',
+      '/api/albums/search?q={query}',
+      '/api/albums/{albumId}',
       '/api/lyrics?title={title}',
       '/api/stream/{videoId}'
     ]
@@ -172,7 +176,7 @@ app.get('/api/ytdl-version', (req, res) => {
   });
 });
 
-// 1. Unified Live Search (JioSaavn 320kbps + YouTube Music fallback)
+// 1. Unified Live Search (YouTube Music via sigma67/ytmusicapi + JioSaavn 320kbps Streams)
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
   if (!query) {
@@ -180,9 +184,21 @@ app.get('/api/search', async (req, res) => {
   }
 
   try {
-    // 1. Search JioSaavn first for crystal-clear 320kbps instant songs
-    const saavnResults = await searchSaavn(query);
-    const saavnSongs = saavnResults.map(s => {
+    const [ytmSongsRes, ytmGeneralRes, saavnRes] = await Promise.allSettled([
+      // 1a. YouTube Music Songs Filter (via sigma67/ytmusicapi)
+      ytmSearch(query, 'songs'),
+      // 1b. YouTube Music Unfiltered Search (catches Top Result Cards, Videos, and Live Tracks)
+      ytmSearch(query, null),
+      // 2. JioSaavn 320kbps Catalog Search
+      searchSaavn(query)
+    ]);
+
+    const ytmSongs = ytmSongsRes.status === 'fulfilled' ? ytmSongsRes.value : [];
+    const ytmGeneral = ytmGeneralRes.status === 'fulfilled' ? ytmGeneralRes.value : [];
+    const saavnRaw = saavnRes.status === 'fulfilled' ? saavnRes.value : [];
+
+    // Format JioSaavn items
+    const saavnSongs = saavnRaw.map(s => {
       const decUrl = decryptSaavnMediaUrl(s.encrypted_media_url);
       if (!decUrl) return null;
       const songId = `saavn_${s.id}`;
@@ -196,7 +212,7 @@ app.get('/api/search', async (req, res) => {
         id: songId,
         title: (s.song || query).replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&'),
         artist: (s.primary_artists || s.singers || 'Artist').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&'),
-        album: s.album || 'Single',
+        album: (s.album || 'Single').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&'),
         coverUrl: s.image ? s.image.replace('150x150', '500x500') : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
         audioUrl: `${getBaseUrl(req)}/api/stream/${songId}`,
         durationSeconds: durSec,
@@ -205,71 +221,50 @@ app.get('/api/search', async (req, res) => {
       };
     }).filter(Boolean);
 
-    if (saavnSongs.length > 0) {
-      return res.json(saavnSongs);
-    }
-  } catch (err) {
-    console.error('Saavn search error:', err.message);
-  }
-
-  // 2. YouTube Music fallback
-  try {
-    const response = await fetch(YTM_SEARCH_URL, {
-      method: 'POST',
-      headers: YTM_HEADERS,
-      body: JSON.stringify({
-        context: YTM_CONTEXT,
-        query: query,
-        params: 'EgWKAQIIAWoKEAoQCRADEAQQBQ%3D%3D'
-      })
+    // Format YouTube Music items with server stream URL
+    const formatYtmSong = (song) => ({
+      ...song,
+      audioUrl: `${getBaseUrl(req)}/api/stream/${song.id}`,
+      genre: 'YouTube Music'
     });
 
-    if (!response.ok) throw new Error(`YouTube status ${response.status}`);
-    const data = await response.json();
-    const section = data.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0];
-    const items = section?.musicShelfRenderer?.contents || [];
+    const combined = [];
+    const seen = new Set();
+    const cleanKey = (t, a) => `${(t || '').toLowerCase().replace(/[^a-z0-9]/g, '')}::${(a || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
-    const songs = items.map(item => {
-      const r = item.musicResponsiveListItemRenderer;
-      if (!r) return null;
-      const title = r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text || 'Unknown Title';
-      const flex1Runs = r.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
-      const artist = flex1Runs[0]?.text || 'Various Artists';
-      let album = 'Single';
-      let durationStr = '3:30';
-
-      for (let i = 1; i < flex1Runs.length; i++) {
-        const text = flex1Runs[i].text.trim();
-        if (text === '•') continue;
-        if (/^\d+:\d+$/.test(text)) durationStr = text;
-        else if (text.length > 1) album = text;
+    // Top priorities: studio songs from ytmSearch('songs'), top result cards & videos from ytmSearch(null)
+    for (const song of ytmSongs) {
+      const k = cleanKey(song.title, song.artist);
+      if (!seen.has(k) && !seen.has(song.id)) {
+        seen.add(k);
+        seen.add(song.id);
+        combined.push(formatYtmSong(song));
       }
+    }
 
-      const videoId = r.playlistItemData?.videoId || 
-                      r.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId;
-      if (!videoId) return null;
+    for (const song of ytmGeneral) {
+      const k = cleanKey(song.title, song.artist);
+      if (!seen.has(k) && !seen.has(song.id)) {
+        seen.add(k);
+        seen.add(song.id);
+        combined.push(formatYtmSong(song));
+      }
+    }
 
-      const thumbs = r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
-      const thumb = thumbs.length > 0 ? thumbs[thumbs.length - 1].url : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
-      const durParts = durationStr.split(':').map(Number);
-      const durationSeconds = durParts.length === 2 ? durParts[0] * 60 + durParts[1] : 210;
+    // High quality 320kbps JioSaavn streams
+    for (const song of saavnSongs) {
+      const k = cleanKey(song.title, song.artist);
+      if (!seen.has(k) && !seen.has(song.id)) {
+        seen.add(k);
+        seen.add(song.id);
+        combined.push(song);
+      }
+    }
 
-      return {
-        id: videoId,
-        title,
-        artist,
-        album,
-        coverUrl: `${getBaseUrl(req)}/api/image-proxy?url=${encodeURIComponent(thumb)}`,
-        audioUrl: `${getBaseUrl(req)}/api/stream/${videoId}`,
-        durationSeconds,
-        durationFormatted: durationStr,
-        genre: 'YouTube Music'
-      };
-    }).filter(Boolean);
-
-    res.json(songs);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.json(combined);
   } catch (err) {
-    console.error('Search error:', err);
+    console.error('Unified Search error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -551,7 +546,8 @@ app.get('/api/lyrics', async (req, res) => {
         if (sRes.ok) {
           const list = await sRes.json();
           if (list && list.length > 0) {
-            data = list[0];
+            const withSynced = list.find(item => item.syncedLyrics && item.syncedLyrics.trim().length > 0);
+            data = withSynced || list.find(item => item.plainLyrics && item.plainLyrics.trim().length > 0) || list[0];
           }
         }
       } catch (e) {
@@ -563,7 +559,7 @@ app.get('/api/lyrics', async (req, res) => {
     if (data && data.syncedLyrics) {
       const parsed = parseLrc(data.syncedLyrics);
       if (parsed.length > 0) {
-        return res.json({ synced: true, lines: parsed });
+        return res.json({ synced: true, lines: parsed, source: 'LRCLIB (Synced)' });
       }
     }
 
@@ -576,7 +572,7 @@ app.get('/api/lyrics', async (req, res) => {
         seconds: Math.min(idx * step, totalDur - 4),
         text
       }));
-      return res.json({ synced: false, lines });
+      return res.json({ synced: false, lines, source: 'LRCLIB (Plain)' });
     }
 
     // 3. Fallback to radioactive11/the-lyrics-api
@@ -592,19 +588,347 @@ app.get('/api/lyrics', async (req, res) => {
       return res.json({ synced: false, lines, source: 'the-lyrics-api' });
     }
 
-    // Fallback friendly message with song metadata
+    // Return empty lines when no lyrics found (client handles UI gracefully)
     res.json({
       synced: false,
-      lines: [
-        { seconds: 4, text: `♪ Now Playing: ${title} ♪` },
-        { seconds: 12, text: `Artist: ${artist || 'Various Artists'}` },
-        { seconds: 24, text: "Lyrics synced with Soundifly Real-Time Engine" },
-        { seconds: 40, text: "Enjoy the music together with friends ❤️" }
-      ]
+      lines: []
     });
   } catch (err) {
     console.error('Lyrics error:', err);
     res.json({ synced: false, lines: [] });
+  }
+});
+
+// 6. REAL ARTIST DISCOVERY & SEARCH API (JioSaavn + Deezer Unified Engine)
+app.get('/api/artists/search', async (req, res) => {
+  const query = req.query.q;
+  if (!query || !query.trim()) {
+    return res.json([]);
+  }
+
+  const page = Math.max(1, parseInt(req.query.page || req.query.p || '1', 10));
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || req.query.n || '20', 10)));
+  const cleanQuery = query.trim();
+  const lowerQuery = cleanQuery.toLowerCase();
+
+  const [saavnRes, deezerRes, ytmRes] = await Promise.allSettled([
+    fetch(
+      `https://www.jiosaavn.com/api.php?__call=search.getArtistResults&_format=json&n=${limit}&p=${page}&q=${encodeURIComponent(cleanQuery)}`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(4500) }
+    ),
+    fetch(
+      `https://api.deezer.com/search/artist?q=${encodeURIComponent(cleanQuery)}&limit=${limit}`,
+      { signal: AbortSignal.timeout(4500) }
+    ),
+    ytmSearchArtists(cleanQuery)
+  ]);
+
+  const results = [];
+  const seen = new Set();
+
+  if (ytmRes.status === 'fulfilled' && Array.isArray(ytmRes.value)) {
+    for (const item of ytmRes.value) {
+      const name = (item.name || '').trim();
+      const lower = name.toLowerCase();
+      if (!name || seen.has(lower)) continue;
+      seen.add(lower);
+      results.push(item);
+    }
+  }
+
+  if (saavnRes.status === 'fulfilled' && saavnRes.value.ok) {
+    try {
+      const sData = await saavnRes.value.json();
+      for (const item of (sData.results || [])) {
+        const name = (item.name || '')
+          .replace(/&quot;/g, '"')
+          .replace(/&#039;/g, "'")
+          .replace(/&amp;/g, '&')
+          .trim();
+        const lower = name.toLowerCase();
+
+        // Skip composite artist collections if user searched for an individual singer
+        if (!name || seen.has(lower)) continue;
+        if (!cleanQuery.includes(',') && (name.match(/,/g) || []).length > 1) continue;
+
+        seen.add(lower);
+
+        const img = (item.image && !item.image.includes('default-film.png'))
+          ? item.image.replace('50x50', '500x500').replace('150x150', '500x500')
+          : '';
+
+        results.push({
+          id: `saavn_${item.id}`,
+          name,
+          imageUrl: img,
+          popularity: item.ctr || 0,
+          artistType: item.role || 'Singer',
+          imageSource: 'JioSaavn Official CDN'
+        });
+      }
+    } catch (e) {
+      console.error('Saavn artist search parse error:', e.message);
+    }
+  }
+
+  if (deezerRes.status === 'fulfilled' && deezerRes.value.ok) {
+    try {
+      const dData = await deezerRes.value.json();
+      for (const item of (dData.data || [])) {
+        const name = (item.name || '').trim();
+        const lower = name.toLowerCase();
+
+        if (!name || seen.has(lower)) continue;
+        if (!cleanQuery.includes(',') && (name.match(/,/g) || []).length > 1) continue;
+
+        seen.add(lower);
+
+        results.push({
+          id: `dz_${item.id}`,
+          name,
+          imageUrl: item.picture_big || item.picture_medium || '',
+          popularity: item.nb_fan || 0,
+          artistType: 'Singer',
+          imageSource: 'Deezer Official CDN'
+        });
+      }
+    } catch (e) {
+      console.error('Deezer artist search parse error:', e.message);
+    }
+  }
+
+  // Smart Ranking: Exact matches first, then prefix matches, then by popularity
+  results.sort((a, b) => {
+    const aLower = a.name.toLowerCase();
+    const bLower = b.name.toLowerCase();
+    const aExact = aLower === lowerQuery;
+    const bExact = bLower === lowerQuery;
+    if (aExact && !bExact) return -1;
+    if (!aExact && bExact) return 1;
+
+    const aPrefix = aLower.startsWith(lowerQuery);
+    const bPrefix = bLower.startsWith(lowerQuery);
+    if (aPrefix && !bPrefix) return -1;
+    if (!aPrefix && bPrefix) return 1;
+
+    return (b.popularity || 0) - (a.popularity || 0);
+  });
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.json(results.slice(0, limit));
+});
+
+// 7. REAL ALBUM SEARCH API (JioSaavn + Deezer Unified Engine)
+app.get('/api/albums/search', async (req, res) => {
+  const query = req.query.q;
+  if (!query || !query.trim()) {
+    return res.json([]);
+  }
+
+  const page = Math.max(1, parseInt(req.query.page || req.query.p || '1', 10));
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit || req.query.n || '20', 10)));
+  const cleanQuery = query.trim();
+  const lowerQuery = cleanQuery.toLowerCase();
+
+  const [saavnRes, deezerRes] = await Promise.allSettled([
+    fetch(
+      `https://www.jiosaavn.com/api.php?__call=search.getAlbumResults&_format=json&n=${limit}&p=${page}&q=${encodeURIComponent(cleanQuery)}`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(4500) }
+    ),
+    fetch(
+      `https://api.deezer.com/search/album?q=${encodeURIComponent(cleanQuery)}&limit=${limit}`,
+      { signal: AbortSignal.timeout(4500) }
+    )
+  ]);
+
+  const results = [];
+  const seen = new Set();
+
+  if (saavnRes.status === 'fulfilled' && saavnRes.value.ok) {
+    try {
+      const sData = await saavnRes.value.json();
+      for (const item of (sData.results || [])) {
+        const title = (item.title || item.name || '')
+          .replace(/&quot;/g, '"')
+          .replace(/&#039;/g, "'")
+          .replace(/&amp;/g, '&')
+          .trim();
+        if (!title) continue;
+
+        let artist = '';
+        if (typeof item.primary_artists === 'string' && item.primary_artists.trim()) {
+          artist = item.primary_artists;
+        } else if (item.artist && item.artist.singers && item.artist.singers.length > 0) {
+          artist = item.artist.singers.map(s => s.name || s).join(', ');
+        } else if (typeof item.music === 'string' && item.music.trim()) {
+          artist = item.music;
+        } else {
+          artist = 'Various Artists';
+        }
+        artist = artist
+          .replace(/&quot;/g, '"')
+          .replace(/&#039;/g, "'")
+          .replace(/&amp;/g, '&')
+          .trim();
+
+        const key = `${title.toLowerCase()}::${artist.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const img = (item.image && !item.image.includes('default-film.png'))
+          ? item.image.replace('150x150', '500x500').replace('50x50', '500x500')
+          : '';
+
+        results.push({
+          id: `saavn_${item.albumid || item.id}`,
+          title,
+          artist,
+          coverUrl: img,
+          releaseYear: (item.year || '2025').toString(),
+          genre: (item.language || 'Music').toString(),
+          source: 'JioSaavn'
+        });
+      }
+    } catch (e) {
+      console.error('Saavn album search parse error:', e.message);
+    }
+  }
+
+  if (deezerRes.status === 'fulfilled' && deezerRes.value.ok) {
+    try {
+      const dData = await deezerRes.value.json();
+      for (const item of (dData.data || [])) {
+        const title = (item.title || '').trim();
+        if (!title) continue;
+
+        const artist = (item.artist?.name || 'Various Artists').trim();
+        const key = `${title.toLowerCase()}::${artist.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        results.push({
+          id: `dz_${item.id}`,
+          title,
+          artist,
+          coverUrl: item.cover_big || item.cover_medium || '',
+          releaseYear: '2025',
+          genre: 'Music',
+          source: 'Deezer'
+        });
+      }
+    } catch (e) {
+      console.error('Deezer album search parse error:', e.message);
+    }
+  }
+
+  // Exact title match priority
+  results.sort((a, b) => {
+    const aLower = a.title.toLowerCase();
+    const bLower = b.title.toLowerCase();
+    const aExact = aLower === lowerQuery;
+    const bExact = bLower === lowerQuery;
+    if (aExact && !bExact) return -1;
+    if (!aExact && bExact) return 1;
+
+    const aPrefix = aLower.startsWith(lowerQuery);
+    const bPrefix = bLower.startsWith(lowerQuery);
+    if (aPrefix && !bPrefix) return -1;
+    if (!aPrefix && bPrefix) return 1;
+    return 0;
+  });
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.json(results.slice(0, limit));
+});
+
+// 8. ALBUM DETAILS WITH TRACKLIST
+app.get('/api/albums/:id', async (req, res) => {
+  const albumId = req.params.id;
+  if (!albumId) {
+    return res.status(400).json({ error: 'Missing albumId' });
+  }
+
+  const cleanId = albumId.replace('saavn_', '').replace('dz_', '');
+
+  try {
+    const url = `https://www.jiosaavn.com/api.php?__call=content.getAlbumDetails&albumid=${cleanId}&_format=json`;
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      signal: AbortSignal.timeout(4500)
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.title) {
+        const title = (data.title || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&').trim();
+        const artist = (data.primary_artists || 'Various Artists').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&').trim();
+        const coverUrl = (data.image || '').replace('150x150', '500x500').replace('50x50', '500x500');
+
+        const tracks = (data.songs || []).map(s => {
+          const decUrl = decryptSaavnMediaUrl(s.encrypted_media_url);
+          const songId = `saavn_${s.id}`;
+          if (decUrl) {
+            streamCache.set(songId, { url: decUrl, timestamp: Date.now() });
+          }
+
+          const durSec = parseInt(s.duration, 10) || 210;
+          const durMin = Math.floor(durSec / 60);
+          const durRemSec = String(durSec % 60).padStart(2, '0');
+
+          return {
+            id: songId,
+            title: (s.song || '').replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&').trim(),
+            artist: (s.primary_artists || s.singers || artist).replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&').trim(),
+            album: title,
+            coverUrl: s.image ? s.image.replace('150x150', '500x500') : coverUrl,
+            audioUrl: `${getBaseUrl(req)}/api/stream/${songId}`,
+            durationSeconds: durSec,
+            durationFormatted: `${durMin}:${durRemSec}`,
+            genre: s.language || data.language || 'Music'
+          };
+        });
+
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        return res.json({
+          id: `saavn_${cleanId}`,
+          title,
+          artist,
+          coverUrl,
+          releaseYear: (data.year || '2025').toString(),
+          genre: (data.language || 'Music').toString(),
+          tracks
+        });
+      }
+    }
+  } catch (e) {
+    console.error('Album details fetch error:', e.message);
+  }
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.status(404).json({ error: 'Album not found' });
+});
+
+// 9. YOUTUBE MUSIC RADIO & AUTOPLAY (via sigma67/ytmusicapi get_watch_playlist)
+app.get('/api/ytmusic/radio/:videoId', async (req, res) => {
+  const videoId = req.params.videoId;
+  if (!videoId || videoId === 'undefined') {
+    return res.status(400).json({ error: 'Missing videoId' });
+  }
+
+  try {
+    const rawTracks = await ytmGetWatchPlaylist(videoId);
+    const tracks = rawTracks.map(t => ({
+      ...t,
+      audioUrl: `${getBaseUrl(req)}/api/stream/${t.id}`,
+      genre: 'YouTube Music Radio'
+    }));
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(tracks);
+  } catch (err) {
+    console.error('Radio endpoint error:', err.message);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json([]);
   }
 });
 

@@ -60,6 +60,7 @@ class SoundiflyAudioHandler extends BaseAudioHandler with SeekHandler {
       artist: artist,
       duration: duration,
       artUri: parsedUri,
+      playable: true,
     ));
   }
 
@@ -133,11 +134,40 @@ class SoundiflyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   @override
+  Future<void> fastForward() async {
+    final newPos = playbackState.value.position + const Duration(seconds: 10);
+    await seek(newPos);
+  }
+
+  @override
+  Future<void> rewind() async {
+    final pos = playbackState.value.position - const Duration(seconds: 10);
+    await seek(pos < Duration.zero ? Duration.zero : pos);
+  }
+
+  @override
   Future<void> stop() async {
     onPauseCallback?.call();
     playbackState.add(playbackState.value.copyWith(
       processingState: AudioProcessingState.idle,
       playing: false,
+    ));
+    await super.stop();
+  }
+
+  void clearState() {
+    mediaItem.add(null);
+    playbackState.add(PlaybackState(
+      controls: const [
+        MediaControl.skipToPrevious,
+        MediaControl.play,
+        MediaControl.skipToNext,
+      ],
+      systemActions: _defaultActions,
+      androidCompactActionIndices: const [0, 1, 2],
+      processingState: AudioProcessingState.idle,
+      playing: false,
+      updatePosition: Duration.zero,
     ));
   }
 }

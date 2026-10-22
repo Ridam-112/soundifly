@@ -10,8 +10,11 @@ import '../providers/audio_player_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_network_image.dart';
-import '../widgets/artist_detail_modal.dart';
+import '../data/music_onboarding_data.dart';
+import 'artist_profile_screen.dart';
+import 'mood_genre_screen.dart';
 import '../widgets/album_detail_modal.dart';
+import '../widgets/add_to_playlist_sheet.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -31,6 +34,7 @@ class _SearchScreenState extends State<SearchScreen> {
   SearchResult _searchResult = SearchResult.empty;
   List<String> _suggestions = [];
   String _selectedFilter = 'All';
+  int _searchSeq = 0;
 
   final List<String> _filters = ['All', 'Songs', 'Artists', 'Albums'];
 
@@ -43,6 +47,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _onQueryChanged(String val) {
     _debounceTimer?.cancel();
+    _searchSeq++;
     setState(() {
       _query = val;
       _errorMessage = null;
@@ -60,7 +65,7 @@ class _SearchScreenState extends State<SearchScreen> {
     _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
       try {
         final suggs = await _repository.getSuggestions(val);
-        if (mounted) {
+        if (mounted && _query.trim() == val.trim()) {
           setState(() {
             _suggestions = suggs;
           });
@@ -75,6 +80,8 @@ class _SearchScreenState extends State<SearchScreen> {
     final cleanQuery = query.trim();
     if (cleanQuery.isEmpty) return;
 
+    final seq = ++_searchSeq;
+
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -82,14 +89,14 @@ class _SearchScreenState extends State<SearchScreen> {
 
     try {
       final res = await _repository.search(cleanQuery, filter: _selectedFilter);
-      if (mounted) {
+      if (mounted && seq == _searchSeq) {
         setState(() {
           _searchResult = res;
           _isLoading = false;
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && seq == _searchSeq) {
         setState(() {
           _isLoading = false;
           _errorMessage = 'Could not fetch search results. Check your connection.';
@@ -103,7 +110,15 @@ class _SearchScreenState extends State<SearchScreen> {
       _selectedFilter = filter;
     });
     if (_query.trim().isNotEmpty) {
-      _performSearch(_query);
+      final clean = _query.trim();
+      final hasDataForFilter = (filter == 'All' && _searchResult.isNotEmpty) ||
+          (filter == 'Songs' && _searchResult.songs.isNotEmpty) ||
+          (filter == 'Artists' && _searchResult.artists.isNotEmpty) ||
+          (filter == 'Albums' && _searchResult.albums.isNotEmpty);
+
+      if (!hasDataForFilter || _searchResult.query.toLowerCase() != clean.toLowerCase()) {
+        _performSearch(clean);
+      }
     }
   }
 
@@ -284,6 +299,18 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildSearchResults(AudioPlayerProvider player, PlaylistProvider playlistProv) {
+    if (_selectedFilter == 'Artists') {
+      return _buildArtistsGrid(_searchResult.artists);
+    }
+
+    if (_selectedFilter == 'Albums') {
+      return _buildAlbumsGrid(_searchResult.albums);
+    }
+
+    if (_selectedFilter == 'Songs') {
+      return _buildSongsList(_searchResult.songs, player, playlistProv);
+    }
+
     if (_searchResult.isEmpty) {
       return Center(
         child: Column(
@@ -298,18 +325,6 @@ class _SearchScreenState extends State<SearchScreen> {
           ],
         ),
       );
-    }
-
-    if (_selectedFilter == 'Artists') {
-      return _buildArtistsGrid(_searchResult.artists);
-    }
-
-    if (_selectedFilter == 'Albums') {
-      return _buildAlbumsGrid(_searchResult.albums);
-    }
-
-    if (_selectedFilter == 'Songs') {
-      return _buildSongsList(_searchResult.songs, player, playlistProv);
     }
 
     // Default 'All' tab: Combined sections
@@ -338,7 +353,17 @@ class _SearchScreenState extends State<SearchScreen> {
                 itemBuilder: (ctx, idx) {
                   final artist = _searchResult.artists[idx];
                   return GestureDetector(
-                    onTap: () => ArtistDetailModal.show(context, artist),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ArtistProfileScreen(
+                            artistName: artist.name,
+                            initialImageUrl: artist.imageUrl,
+                          ),
+                        ),
+                      );
+                    },
                     child: Container(
                       width: 105,
                       margin: const EdgeInsets.only(right: 14),
@@ -474,7 +499,19 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildSongsList(List<Song> songs, AudioPlayerProvider player, PlaylistProvider playlistProv) {
     if (songs.isEmpty) {
-      return const Center(child: Text('No songs found', style: TextStyle(color: AppColors.textMuted)));
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.music_off_rounded, size: 54, color: AppColors.textMuted),
+            const SizedBox(height: 10),
+            Text(
+              'No songs found for "$_query"',
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 16),
+            ),
+          ],
+        ),
+      );
     }
     return ListView.builder(
       itemCount: songs.length,
@@ -487,7 +524,19 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildArtistsGrid(List<Artist> artists) {
     if (artists.isEmpty) {
-      return const Center(child: Text('No artists found', style: TextStyle(color: AppColors.textMuted)));
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.person_search_rounded, size: 54, color: AppColors.textMuted),
+            const SizedBox(height: 10),
+            Text(
+              'No artists found for "$_query"',
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 16),
+            ),
+          ],
+        ),
+      );
     }
     return GridView.builder(
       padding: const EdgeInsets.only(top: 8, bottom: 60),
@@ -501,7 +550,17 @@ class _SearchScreenState extends State<SearchScreen> {
       itemBuilder: (ctx, idx) {
         final artist = artists[idx];
         return GestureDetector(
-          onTap: () => ArtistDetailModal.show(context, artist),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ArtistProfileScreen(
+                  artistName: artist.name,
+                  initialImageUrl: artist.imageUrl,
+                ),
+              ),
+            );
+          },
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -542,7 +601,19 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _buildAlbumsGrid(List<Album> albums) {
     if (albums.isEmpty) {
-      return const Center(child: Text('No albums found', style: TextStyle(color: AppColors.textMuted)));
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.album_rounded, size: 54, color: AppColors.textMuted),
+            const SizedBox(height: 10),
+            Text(
+              'No albums found for "$_query"',
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 16),
+            ),
+          ],
+        ),
+      );
     }
     return GridView.builder(
       padding: const EdgeInsets.only(top: 8, bottom: 60),
@@ -644,6 +715,11 @@ class _SearchScreenState extends State<SearchScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
+              icon: const Icon(Icons.playlist_add_rounded, color: AppColors.textSecondary, size: 22),
+              tooltip: 'Add to Playlist',
+              onPressed: () => AddToPlaylistSheet.show(context, song),
+            ),
+            IconButton(
               icon: Icon(
                 isLiked ? Icons.favorite : Icons.favorite_border,
                 color: isLiked ? AppColors.primary : AppColors.textSecondary,
@@ -686,26 +762,19 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildBrowseCategories(AudioPlayerProvider player) {
-    final categories = [
-      {'title': 'Bangla Top Hits 🎸', 'query': 'Bangla top songs 2026', 'color1': 0xFFFF5500, 'color2': 0xFF992200},
-      {'title': 'Arijit Singh Best ❤️', 'query': 'Arijit Singh hit songs', 'color1': 0xFFFF3366, 'color2': 0xFF880022},
-      {'title': 'Shironamhin & Rock ⚡', 'query': 'Shironamhin best songs', 'color1': 0xFF6C5CE7, 'color2': 0xFF3D2085},
-      {'title': 'Lo-Fi Chill & Study ☕', 'query': 'Lo-Fi beats chill music', 'color1': 0xFF00CEC9, 'color2': 0xFF0984E3},
-      {'title': 'Gym & Workout Beast 🔥', 'query': 'Gym workout motivation songs', 'color1': 0xFFE17055, 'color2': 0xFFD63031},
-      {'title': 'Romantic Couple Vibes ✨', 'query': 'Romantic love songs hindi bangla', 'color1': 0xFF2D3436, 'color2': 0xFF000000},
-    ];
+    final genres = MusicOnboardingData.availableGenres;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Explore Categories',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+          'Explore Moods & Genres',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.white),
         ),
         const SizedBox(height: 12),
         Expanded(
           child: GridView.builder(
-            itemCount: categories.length,
+            itemCount: genres.length,
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
               childAspectRatio: 1.6,
@@ -713,27 +782,70 @@ class _SearchScreenState extends State<SearchScreen> {
               mainAxisSpacing: 12,
             ),
             itemBuilder: (ctx, idx) {
-              final cat = categories[idx];
+              final g = genres[idx];
               return GestureDetector(
                 onTap: () {
-                  final q = cat['query'] as String;
-                  _searchCtrl.text = q;
-                  _onQueryChanged(q);
-                  _performSearch(q);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => MoodGenreScreen(genreMood: g),
+                    ),
+                  );
                 },
                 child: Container(
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     gradient: LinearGradient(
-                      colors: [Color(cat['color1'] as int), Color(cat['color2'] as int)],
+                      colors: g.gradient,
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: g.gradient.first.withValues(alpha: 0.35),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
                   ),
-                  child: Text(
-                    cat['title'] as String,
-                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: Colors.white),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(g.emoji, style: const TextStyle(fontSize: 22)),
+                          Icon(g.icon, color: Colors.white70, size: 18),
+                        ],
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            g.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            g.description,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.white.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               );

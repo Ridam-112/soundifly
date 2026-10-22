@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import 'lyrics_viewer.dart';
 import 'app_network_image.dart';
 import 'song_share_modal.dart';
+import 'add_to_playlist_sheet.dart';
 
 class FullPlayerModal extends StatefulWidget {
   final int initialTabIndex;
@@ -298,6 +299,11 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
                 ),
               ),
               IconButton(
+                icon: const Icon(Icons.playlist_add_rounded, color: Colors.white70, size: 28),
+                tooltip: 'Add to Playlist',
+                onPressed: () => AddToPlaylistSheet.show(context, song),
+              ),
+              IconButton(
                 icon: Icon(
                   isLiked ? Icons.favorite : Icons.favorite_border,
                   color: isLiked ? AppColors.primary : Colors.white70,
@@ -415,87 +421,6 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
           ),
 
           const Spacer(),
-
-          // Spotify-Style Live Lyrics Preview Card
-          GestureDetector(
-            onTap: () {
-              _tabController.animateTo(1);
-            },
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E1E22),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.25),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: const [
-                          Icon(Icons.lyrics_rounded, color: AppColors.primary, size: 16),
-                          SizedBox(width: 6),
-                          Text(
-                            'LYRICS',
-                            style: TextStyle(
-                              color: AppColors.primary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.0,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          GestureDetector(
-                            onTap: () {
-                              SongShareModal.show(
-                                context,
-                                song: song,
-                                lyrics: player.currentLyrics,
-                                activeLyricIndex: player.activeLyricIndex,
-                                initialMode: ShareCardMode.lyrics,
-                              );
-                            },
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 6),
-                              child: Icon(Icons.share_outlined, color: Colors.white70, size: 16),
-                            ),
-                          ),
-                          const Icon(Icons.open_in_full_rounded, color: Colors.white54, size: 14),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    player.activeLyricLine?.text ??
-                        (player.currentLyrics.lines.isNotEmpty
-                            ? player.currentLyrics.lines.first.text
-                            : (player.isLoadingLyrics
-                                ? 'Loading synchronized lyrics...'
-                                : 'Tap to view live lyrics')),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      height: 1.3,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
 
           // Bottom Listen Together pill
           GestureDetector(

@@ -4,6 +4,7 @@ import '../models/album.dart';
 import '../models/search_result.dart';
 import '../services/yt_music_service.dart';
 import '../services/music_cache_service.dart';
+import '../data/music_onboarding_data.dart';
 import '../data/authorized_tracks.dart';
 
 abstract class MusicRepository {
@@ -18,7 +19,7 @@ abstract class MusicRepository {
 class SoundiflyMusicRepository implements MusicRepository {
   @override
   Future<SearchResult> search(String query, {String filter = 'All'}) async {
-    final cleanQuery = query.trim();
+    final cleanQuery = query.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (cleanQuery.isEmpty) return SearchResult.empty;
 
     final cacheKey = '$cleanQuery::$filter';
@@ -29,51 +30,22 @@ class SoundiflyMusicRepository implements MusicRepository {
     List<Artist> matchingArtists = [];
     List<Album> matchingAlbums = [];
 
-    final qLower = cleanQuery.toLowerCase();
-
-    // 1. Fetch matching Artists from catalog
-    if (filter == 'All' || filter == 'Artists') {
-      matchingArtists = AuthorizedMusicCatalog.artists.where((a) {
-        return a.name.toLowerCase().contains(qLower) ||
-            a.genres.any((g) => g.toLowerCase().contains(qLower));
-      }).toList();
-    }
-
-    // 2. Fetch matching Albums from catalog
-    if (filter == 'All' || filter == 'Albums') {
-      matchingAlbums = AuthorizedMusicCatalog.albums.where((alb) {
-        return alb.title.toLowerCase().contains(qLower) ||
-            alb.artist.toLowerCase().contains(qLower) ||
-            alb.genre.toLowerCase().contains(qLower);
-      }).toList();
-    }
-
-    // 3. Fetch songs from API and fallback catalog
-    if (filter == 'All' || filter == 'Songs') {
-      // First check local authorized catalog for immediate matches
-      final localMatches = AuthorizedMusicCatalog.demoAuthorizedSongs.where((s) {
-        return s.title.toLowerCase().contains(qLower) ||
-            s.artist.toLowerCase().contains(qLower) ||
-            s.album.toLowerCase().contains(qLower);
-      }).toList();
-
-      try {
-        final apiSongs = await YTMusicService.search(cleanQuery);
-        // Deduplicate and combine
-        final Set<String> seenIds = {};
-        for (final s in localMatches) {
-          seenIds.add(s.id);
-          songs.add(s);
-        }
-        for (final s in apiSongs) {
-          if (!seenIds.contains(s.id)) {
-            seenIds.add(s.id);
-            songs.add(s);
-          }
-        }
-      } catch (_) {
-        songs = localMatches.isNotEmpty ? localMatches : AuthorizedMusicCatalog.demoAuthorizedSongs;
-      }
+    // Search corresponding categories
+    if (filter == 'All') {
+      final results = await Future.wait([
+        YTMusicService.search(cleanQuery),
+        YTMusicService.searchArtists(cleanQuery),
+        YTMusicService.searchAlbums(cleanQuery),
+      ]);
+      songs = results[0] as List<Song>;
+      matchingArtists = results[1] as List<Artist>;
+      matchingAlbums = results[2] as List<Album>;
+    } else if (filter == 'Songs') {
+      songs = await YTMusicService.search(cleanQuery);
+    } else if (filter == 'Artists') {
+      matchingArtists = await YTMusicService.searchArtists(cleanQuery);
+    } else if (filter == 'Albums') {
+      matchingAlbums = await YTMusicService.searchAlbums(cleanQuery);
     }
 
     final result = SearchResult(
@@ -97,16 +69,12 @@ class SoundiflyMusicRepository implements MusicRepository {
       if (suggestions.isNotEmpty) return suggestions;
     } catch (_) {}
 
-    // Fallback local suggestions
-    final qLower = cleanQuery.toLowerCase();
     final localSuggs = <String>{};
 
-    for (final s in AuthorizedMusicCatalog.demoAuthorizedSongs) {
-      if (s.title.toLowerCase().contains(qLower)) localSuggs.add(s.title);
-      if (s.artist.toLowerCase().contains(qLower)) localSuggs.add(s.artist);
-    }
-    for (final a in AuthorizedMusicCatalog.artists) {
-      if (a.name.toLowerCase().contains(qLower)) localSuggs.add(a.name);
+    for (final a in MusicOnboardingData.curatedArtists) {
+      if (a.matchesQuery(cleanQuery)) {
+        localSuggs.add(a.name);
+      }
     }
 
     return localSuggs.take(6).toList();
@@ -127,40 +95,42 @@ class SoundiflyMusicRepository implements MusicRepository {
     final cached = MusicCacheService.getArtist(artistId);
     if (cached != null) return cached;
 
-    final found = AuthorizedMusicCatalog.artists.firstWhere(
-      (a) => a.id == artistId,
-      orElse: () => Artist(
-        id: artistId,
-        name: 'Featured Artist',
-        imageUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
-        genres: ['Music'],
-        topSongs: AuthorizedMusicCatalog.demoAuthorizedSongs.take(3).toList(),
-      ),
-    );
+    for (final ca in MusicOnboardingData.curatedArtists) {
+      if (ca.id == artistId || ca.name.toLowerCase() == artistId.toLowerCase()) {
+        final artist = Artist(
+          id: ca.id,
+          name: ca.name,
+          imageUrl: ca.imageUrl,
+          bio: '${ca.artistTypeDisplay} • ${ca.languages.join(", ")}',
+          monthlyListeners: ca.popularityScore,
+          genres: [ca.genre, ...ca.languages],
+        );
+        MusicCacheService.cacheArtist(artist);
+        return artist;
+      }
+    }
 
-    MusicCacheService.cacheArtist(found);
-    return found;
+    final list = await YTMusicService.searchArtists(artistId);
+    if (list.isNotEmpty) {
+      MusicCacheService.cacheArtist(list.first);
+      return list.first;
+    }
+
+    return null;
   }
 
   @override
   Future<Album?> getAlbum(String albumId) async {
     final cached = MusicCacheService.getAlbum(albumId);
-    if (cached != null) return cached;
+    if (cached != null && cached.tracks.isNotEmpty) return cached;
 
-    final found = AuthorizedMusicCatalog.albums.firstWhere(
-      (a) => a.id == albumId,
-      orElse: () => Album(
-        id: albumId,
-        title: 'Featured Album',
-        artist: 'Various Artists',
-        coverUrl: 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=600&auto=format&fit=crop&q=80',
-        releaseYear: '2026',
-        tracks: AuthorizedMusicCatalog.demoAuthorizedSongs.take(4).toList(),
-      ),
-    );
+    final detailed = await YTMusicService.getAlbumDetails(albumId);
+    if (detailed != null) {
+      MusicCacheService.cacheAlbum(detailed);
+      return detailed;
+    }
 
-    MusicCacheService.cacheAlbum(found);
-    return found;
+    return cached;
   }
 
   @override

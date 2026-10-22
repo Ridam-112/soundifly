@@ -6,8 +6,8 @@ import '../models/lyrics_model.dart';
 import '../services/lyrics_service.dart';
 import '../services/media_session_service.dart';
 import '../services/supabase_music_sync_service.dart';
-import '../data/mock_data.dart';
-import '../data/authorized_tracks.dart';
+import '../services/yt_music_service.dart';
+import '../services/audio_stream_resolver.dart';
 
 enum LoopMode { off, all, one }
 
@@ -34,6 +34,7 @@ class AudioPlayerProvider extends ChangeNotifier {
   bool _isShuffle = false;
   LoopMode _loopMode = LoopMode.off;
   double _volume = 1.0;
+  bool _autoplay = true;
 
   /// Configurable playback threshold before recording listening history
   static const Duration playbackHistoryThreshold = Duration(seconds: 10);
@@ -44,17 +45,8 @@ class AudioPlayerProvider extends ChangeNotifier {
 
   AudioPlayerProvider() {
     _initAudioPlayer();
-    // Preload first song from authorized demo catalog
-    if (AuthorizedMusicCatalog.demoAuthorizedSongs.isNotEmpty) {
-      _queue = List.from(AuthorizedMusicCatalog.demoAuthorizedSongs);
-      _currentSong = _queue.first;
-      _totalDuration = _currentSong!.duration;
-    } else if (MockData.allSongs.isNotEmpty) {
-      _queue = List.from(MockData.allSongs);
-      _currentSong = _queue.first;
-      _totalDuration = _currentSong!.duration;
-    }
-    loadLyricsForCurrentSong();
+    _currentSong = null;
+    _queue = [];
   }
 
   Song? get currentSong => _currentSong;
@@ -69,6 +61,12 @@ class AudioPlayerProvider extends ChangeNotifier {
   bool get isShuffle => _isShuffle;
   LoopMode get loopMode => _loopMode;
   double get volume => _volume;
+  bool get autoplay => _autoplay;
+
+  void setAutoplay(bool value) {
+    _autoplay = value;
+    notifyListeners();
+  }
 
   // Live Lyrics Getters (Phase 5)
   ParsedLyrics get currentLyrics => _currentLyrics;
@@ -239,7 +237,9 @@ class AudioPlayerProvider extends ChangeNotifier {
 
     try {
       await _player.stop();
-      await _player.setSource(UrlSource(song.audioUrl));
+      final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
+      debugPrint('[AudioPlayerProvider] Starting playback: $playableUrl');
+      await _player.setSource(UrlSource(playableUrl));
       await _player.resume();
       _isPlaying = true;
       _isLoading = false;
@@ -248,7 +248,8 @@ class AudioPlayerProvider extends ChangeNotifier {
       debugPrint('Initial play attempt: $e');
       try {
         await Future.delayed(const Duration(milliseconds: 600));
-        await _player.play(UrlSource(song.audioUrl));
+        final fallbackUrl = await AudioStreamResolver.resolveStreamUrl(song);
+        await _player.play(UrlSource(fallbackUrl));
         _isPlaying = true;
         _isLoading = false;
         _playbackErrorMessage = null;
@@ -322,10 +323,12 @@ class AudioPlayerProvider extends ChangeNotifier {
         if (_lastNotificationLyric != lyricText) {
           _lastNotificationLyric = lyricText;
           MediaSessionService.updateMetadata(
+            id: _currentSong!.id,
             title: _currentSong!.title,
             artist: _currentSong!.artist,
             album: '♪ $lyricText',
             artworkUrl: _currentSong!.coverUrl,
+            duration: _totalDuration,
           );
         }
       }
@@ -386,6 +389,24 @@ class AudioPlayerProvider extends ChangeNotifier {
         _currentIndex++;
       } else if (_loopMode == LoopMode.all) {
         _currentIndex = 0;
+      } else if (_autoplay && _currentSong != null) {
+        final currentArtist = _currentSong!.artist;
+        final existingIds = _queue.map((s) => s.id).toSet();
+        try {
+          final recommended = await YTMusicService.search(currentArtist);
+          final newTracks = recommended.where((s) => !existingIds.contains(s.id)).take(5).toList();
+          if (newTracks.isNotEmpty) {
+            _queue.addAll(newTracks);
+            _currentIndex++;
+            notifyListeners();
+            await playSong(_queue[_currentIndex]);
+            return;
+          }
+        } catch (_) {}
+        await _player.stop();
+        _isPlaying = false;
+        notifyListeners();
+        return;
       } else {
         await _player.stop();
         _isPlaying = false;
@@ -503,6 +524,31 @@ class AudioPlayerProvider extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('Sync remote error: $e');
+    }
+  }
+
+  /// Resets all playback state, pauses/stops audio, and clears background media session.
+  /// Used upon user sign-out, session teardown, or account switching.
+  Future<void> resetPlayback() async {
+    _currentSong = null;
+    _isPlaying = false;
+    _isLoading = false;
+    _playbackErrorMessage = null;
+    _currentPosition = Duration.zero;
+    _totalDuration = Duration.zero;
+    _currentLyrics = ParsedLyrics.empty;
+    _activeLyricIndex = -1;
+    _lastNotificationLyric = null;
+    _queue = [];
+    _currentIndex = 0;
+    _historyRecordedForCurrentTrack = false;
+    MediaSessionService.clear();
+    notifyListeners();
+
+    try {
+      await _player.stop();
+    } catch (e) {
+      debugPrint('Error stopping player on reset: $e');
     }
   }
 

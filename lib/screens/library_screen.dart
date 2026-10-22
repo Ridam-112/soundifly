@@ -239,7 +239,9 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   void _showCreatePlaylistDialog(BuildContext context, PlaylistProvider playlistProv) {
     final titleCtrl = TextEditingController();
     final descCtrl = TextEditingController();
+    final collabEmailCtrl = TextEditingController();
     PlaylistVisibility selectedVisibility = PlaylistVisibility.public;
+    String? emailError;
 
     showModalBottomSheet(
       context: context,
@@ -318,21 +320,91 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
                   onTap: () => setModalState(() => selectedVisibility = PlaylistVisibility.collaborative),
                 ),
 
+                // Collaborator Email Input Field
+                if (selectedVisibility == PlaylistVisibility.collaborative) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.heartRed.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.heartRed.withValues(alpha: 0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: const [
+                            Icon(Icons.people_alt_rounded, color: AppColors.heartRed, size: 18),
+                            SizedBox(width: 8),
+                            Text(
+                              'Collaborator Invitation',
+                              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Enter the email address your partner or friend uses to log into Soundifly.',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: collabEmailCtrl,
+                          keyboardType: TextInputType.emailAddress,
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                          onChanged: (_) {
+                            if (emailError != null) {
+                              setModalState(() => emailError = null);
+                            }
+                          },
+                          decoration: InputDecoration(
+                            labelText: "Partner's Soundifly Email *",
+                            labelStyle: const TextStyle(color: AppColors.heartRed, fontSize: 13),
+                            hintText: 'e.g. partner@gmail.com',
+                            hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                            prefixIcon: const Icon(Icons.alternate_email_rounded, color: AppColors.heartRed, size: 18),
+                            errorText: emailError,
+                            filled: true,
+                            fillColor: AppColors.bgSurface,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
+                      backgroundColor: selectedVisibility == PlaylistVisibility.collaborative
+                          ? AppColors.heartRed
+                          : AppColors.primary,
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                     onPressed: () {
+                      if (selectedVisibility == PlaylistVisibility.collaborative) {
+                        final email = collabEmailCtrl.text.trim();
+                        if (email.isEmpty || !email.contains('@') || !email.contains('.')) {
+                          setModalState(() {
+                            emailError = 'Please enter a valid Soundifly user email';
+                          });
+                          return;
+                        }
+                      }
+
                       final p = playlistProv.createPlaylist(
                         title: titleCtrl.text,
                         description: descCtrl.text,
                         visibility: selectedVisibility,
+                        collaboratorEmail: selectedVisibility == PlaylistVisibility.collaborative
+                            ? collabEmailCtrl.text.trim()
+                            : null,
                       );
                       Navigator.pop(ctx);
                       Navigator.push(

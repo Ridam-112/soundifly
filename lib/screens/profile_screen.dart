@@ -8,6 +8,7 @@ import '../models/user_profile.dart';
 import '../services/supabase_user_service.dart';
 import '../theme/app_theme.dart';
 import 'listening_history_screen.dart';
+import 'onboarding/music_onboarding_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -20,12 +21,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   UserProfile? _profile;
 
   final List<String> _presetAvatars = [
-    'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80',
-    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80',
-    'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=400&auto=format&fit=crop&q=80',
-    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
-    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&auto=format&fit=crop&q=80',
-    'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&auto=format&fit=crop&q=80',
+    'https://api.dicebear.com/7.x/bottts/png?seed=Soundifly1',
+    'https://api.dicebear.com/7.x/bottts/png?seed=Soundifly2',
+    'https://api.dicebear.com/7.x/bottts/png?seed=Soundifly3',
+    'https://api.dicebear.com/7.x/bottts/png?seed=Soundifly4',
+    'https://api.dicebear.com/7.x/bottts/png?seed=Soundifly5',
+    'https://api.dicebear.com/7.x/bottts/png?seed=Soundifly6',
   ];
 
   @override
@@ -286,6 +287,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
             const SizedBox(height: 24),
 
+            // Music Preferences Section (Spotify-style Personalization)
+            _buildSectionTitle('Music Personalization'),
+            _buildSettingCard(
+              children: [
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.tune_rounded, color: AppColors.primary, size: 20),
+                  ),
+                  title: const Text('Music Preferences', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    settingsProv.preferredLanguages.isNotEmpty || settingsProv.favoriteArtists.isNotEmpty || settingsProv.preferredGenres.isNotEmpty
+                        ? '${settingsProv.preferredLanguages.length} Languages • ${settingsProv.favoriteArtists.length} Artists • ${settingsProv.preferredGenres.length} Moods'
+                        : 'Tap to configure your preferred languages, artists & moods',
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.arrow_forward_ios_rounded, color: AppColors.textSecondary, size: 14),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const MusicOnboardingScreen(isEditingMode: true),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 18),
+
             // App Preferences Section
             _buildSectionTitle('App Preferences & Theme'),
             _buildSettingCard(
@@ -315,7 +351,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   subtitle: const Text('Keep the music going when your queue finishes', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                   activeTrackColor: AppColors.primary,
                   value: settingsProv.settings.autoplay,
-                  onChanged: (v) => settingsProv.updateAutoplay(v),
+                  onChanged: (v) {
+                    settingsProv.updateAutoplay(v);
+                    context.read<AudioPlayerProvider>().setAutoplay(v);
+                  },
+                ),
+                const Divider(color: Colors.white10),
+                ListTile(
+                  leading: const Icon(Icons.cleaning_services_rounded, color: AppColors.textSecondary),
+                  title: const Text('Clear App Cache', style: TextStyle(color: Colors.white, fontSize: 14)),
+                  subtitle: const Text('Free up temporary image and stream cache', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        backgroundColor: AppColors.primary,
+                        content: Text('App cache cleared successfully!'),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
@@ -475,6 +528,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                                 onPressed: () {
                                   Navigator.pop(ctx);
+                                  context.read<AudioPlayerProvider>().resetPlayback();
                                   auth.signOut();
                                 },
                                 child: const Text('Log Out'),

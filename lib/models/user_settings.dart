@@ -8,6 +8,10 @@ class UserSettings {
   final bool miniPlayerLyricsEnabled;
   final bool notificationLyricsEnabled;
   final bool miniPlayerInitialModeLyrics;
+  final bool onboardingCompleted;
+  final List<String> preferredLanguages;
+  final List<String> favoriteArtists;
+  final List<String> preferredGenres;
   final DateTime? updatedAt;
 
   const UserSettings({
@@ -20,6 +24,10 @@ class UserSettings {
     this.miniPlayerLyricsEnabled = false,
     this.notificationLyricsEnabled = true,
     this.miniPlayerInitialModeLyrics = false,
+    this.onboardingCompleted = false,
+    this.preferredLanguages = const [],
+    this.favoriteArtists = const [],
+    this.preferredGenres = const [],
     this.updatedAt,
   });
 
@@ -38,6 +46,19 @@ class UserSettings {
       miniPlayerLyricsEnabled: map['mini_player_lyrics_enabled'] as bool? ?? false,
       notificationLyricsEnabled: map['notification_lyrics_enabled'] as bool? ?? true,
       miniPlayerInitialModeLyrics: map['mini_player_initial_mode_lyrics'] as bool? ?? false,
+      onboardingCompleted: map['onboarding_completed'] as bool? ?? false,
+      preferredLanguages: (map['preferred_languages'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      favoriteArtists: (map['favorite_artists'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      preferredGenres: (map['preferred_genres'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
       updatedAt: map['updated_at'] != null
           ? DateTime.tryParse(map['updated_at'].toString())
           : null,
@@ -55,6 +76,10 @@ class UserSettings {
       'mini_player_lyrics_enabled': miniPlayerLyricsEnabled,
       'notification_lyrics_enabled': notificationLyricsEnabled,
       'mini_player_initial_mode_lyrics': miniPlayerInitialModeLyrics,
+      'onboarding_completed': onboardingCompleted,
+      'preferred_languages': preferredLanguages,
+      'favorite_artists': favoriteArtists,
+      'preferred_genres': preferredGenres,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
   }
@@ -68,6 +93,10 @@ class UserSettings {
     bool? miniPlayerLyricsEnabled,
     bool? notificationLyricsEnabled,
     bool? miniPlayerInitialModeLyrics,
+    bool? onboardingCompleted,
+    List<String>? preferredLanguages,
+    List<String>? favoriteArtists,
+    List<String>? preferredGenres,
   }) {
     return UserSettings(
       userId: userId,
@@ -79,6 +108,10 @@ class UserSettings {
       miniPlayerLyricsEnabled: miniPlayerLyricsEnabled ?? this.miniPlayerLyricsEnabled,
       notificationLyricsEnabled: notificationLyricsEnabled ?? this.notificationLyricsEnabled,
       miniPlayerInitialModeLyrics: miniPlayerInitialModeLyrics ?? this.miniPlayerInitialModeLyrics,
+      onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
+      preferredLanguages: preferredLanguages ?? this.preferredLanguages,
+      favoriteArtists: favoriteArtists ?? this.favoriteArtists,
+      preferredGenres: preferredGenres ?? this.preferredGenres,
       updatedAt: DateTime.now(),
     );
   }

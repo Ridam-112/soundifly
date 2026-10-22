@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/album.dart';
 import '../providers/audio_player_provider.dart';
+import '../services/yt_music_service.dart';
 import '../theme/app_theme.dart';
 import 'app_network_image.dart';
 
-class AlbumDetailModal extends StatelessWidget {
+class AlbumDetailModal extends StatefulWidget {
   final Album album;
 
   const AlbumDetailModal({super.key, required this.album});
@@ -17,6 +18,58 @@ class AlbumDetailModal extends StatelessWidget {
       backgroundColor: Colors.transparent,
       builder: (ctx) => AlbumDetailModal(album: album),
     );
+  }
+
+  @override
+  State<AlbumDetailModal> createState() => _AlbumDetailModalState();
+}
+
+class _AlbumDetailModalState extends State<AlbumDetailModal> {
+  late Album _album;
+  bool _isLoadingTracks = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _album = widget.album;
+    if (_album.tracks.isEmpty) {
+      _loadTracks();
+    }
+  }
+
+  Future<void> _loadTracks() async {
+    setState(() {
+      _isLoadingTracks = true;
+    });
+
+    try {
+      final detailed = await YTMusicService.getAlbumDetails(_album.id);
+      if (mounted && detailed != null && detailed.tracks.isNotEmpty) {
+        setState(() {
+          _album = _album.copyWith(tracks: detailed.tracks);
+          _isLoadingTracks = false;
+        });
+        return;
+      }
+    } catch (_) {}
+
+    // Fallback: search songs for this album title & artist
+    try {
+      final songs = await YTMusicService.search('${_album.title} ${_album.artist}');
+      if (mounted && songs.isNotEmpty) {
+        setState(() {
+          _album = _album.copyWith(tracks: songs);
+          _isLoadingTracks = false;
+        });
+        return;
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        _isLoadingTracks = false;
+      });
+    }
   }
 
   @override
@@ -104,7 +157,7 @@ class AlbumDetailModal extends StatelessWidget {
                             ],
                           ),
                           child: AppNetworkImage(
-                            url: album.coverUrl,
+                            url: _album.coverUrl,
                             width: 140,
                             height: 140,
                             borderRadius: BorderRadius.circular(18),
@@ -112,7 +165,7 @@ class AlbumDetailModal extends StatelessWidget {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          album.title,
+                          _album.title,
                           style: const TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w900,
@@ -122,7 +175,7 @@ class AlbumDetailModal extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          album.artist,
+                          _album.artist,
                           style: const TextStyle(
                             color: AppColors.primary,
                             fontSize: 14,
@@ -131,7 +184,7 @@ class AlbumDetailModal extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${album.releaseYear} • ${album.genre} • ${album.tracks.length} tracks (${album.formattedTotalDuration})',
+                          '${_album.releaseYear} • ${_album.genre} • ${_album.tracks.length} tracks (${_album.formattedTotalDuration})',
                           style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                         ),
                         const SizedBox(height: 20),
@@ -150,8 +203,8 @@ class AlbumDetailModal extends StatelessWidget {
                               icon: const Icon(Icons.play_arrow_rounded, size: 24),
                               label: const Text('Play Album', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                               onPressed: () {
-                                if (album.tracks.isNotEmpty) {
-                                  player.playSong(album.tracks.first, playlist: album.tracks);
+                                if (_album.tracks.isNotEmpty) {
+                                  player.playSong(_album.tracks.first, playlist: _album.tracks);
                                 }
                               },
                             ),
@@ -177,13 +230,22 @@ class AlbumDetailModal extends StatelessWidget {
                   ),
                 ),
 
-                // Tracklist
-                if (album.tracks.isEmpty)
+                // Tracklist Body
+                if (_isLoadingTracks)
+                  const SliverToBoxAdapter(
+                    child: Padding(
+                      padding: EdgeInsets.all(32),
+                      child: Center(
+                        child: CircularProgressIndicator(color: AppColors.primary),
+                      ),
+                    ),
+                  )
+                else if (_album.tracks.isEmpty)
                   const SliverToBoxAdapter(
                     child: Padding(
                       padding: EdgeInsets.all(24),
                       child: Center(
-                        child: Text('No tracks in this album.', style: TextStyle(color: AppColors.textMuted)),
+                        child: Text('No tracks found for this album.', style: TextStyle(color: AppColors.textMuted)),
                       ),
                     ),
                   )
@@ -191,7 +253,7 @@ class AlbumDetailModal extends StatelessWidget {
                   SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (ctx, idx) {
-                        final song = album.tracks[idx];
+                        final song = _album.tracks[idx];
                         final isPlayingThis = player.currentSong?.id == song.id;
 
                         return Container(
@@ -250,13 +312,13 @@ class AlbumDetailModal extends StatelessWidget {
                               if (isPlayingThis) {
                                 player.togglePlayPause();
                               } else {
-                                player.playSong(song, playlist: album.tracks, startIndex: idx);
+                                player.playSong(song, playlist: _album.tracks, startIndex: idx);
                               }
                             },
                           ),
                         );
                       },
-                      childCount: album.tracks.length,
+                      childCount: _album.tracks.length,
                     ),
                   ),
 

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../providers/audio_player_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../providers/user_settings_provider.dart';
 import '../screens/auth/auth_screen.dart';
 import '../screens/auth/reset_password_screen.dart';
+import '../screens/onboarding/music_onboarding_screen.dart';
 import '../theme/app_theme.dart';
 import 'responsive_scaffold.dart';
 
@@ -22,6 +24,7 @@ class _AuthGateState extends State<AuthGate> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    final settingsProv = context.watch<UserSettingsProvider>();
 
     // Initial session restoration check (prevents screen flicker)
     if (auth.isLoading) {
@@ -68,8 +71,15 @@ class _AuthGateState extends State<AuthGate> {
 
     // Authenticated application or Guest session
     if (auth.isAuthenticated || auth.isGuest) {
-      final currentUserId = auth.user?.id;
+      final currentUserId = auth.user?.id ?? (auth.isGuest ? 'guest' : null);
       if (currentUserId != null && currentUserId != _lastLoadedUserId) {
+        if (_lastLoadedUserId != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              context.read<AudioPlayerProvider>().resetPlayback();
+            }
+          });
+        }
         _lastLoadedUserId = currentUserId;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -78,11 +88,25 @@ class _AuthGateState extends State<AuthGate> {
           }
         });
       }
+
+      // First-login music personalization check:
+      // If user has not completed onboarding, route to MusicOnboardingScreen before Home
+      if (!settingsProv.onboardingCompleted) {
+        return const MusicOnboardingScreen();
+      }
+
       return const ResponsiveScaffold();
     }
 
-    // Reset session marker when signed out
-    _lastLoadedUserId = null;
+    // Reset session marker when signed out and teardown playback state
+    if (_lastLoadedUserId != null) {
+      _lastLoadedUserId = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          context.read<AudioPlayerProvider>().resetPlayback();
+        }
+      });
+    }
 
     // Unauthenticated entry
     return const AuthScreen();
