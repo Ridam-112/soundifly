@@ -232,7 +232,17 @@ app.get('/api/search', async (req, res) => {
     const seen = new Set();
     const cleanKey = (t, a) => `${(t || '').toLowerCase().replace(/[^a-z0-9]/g, '')}::${(a || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
-    // Top priorities: studio songs from ytmSearch('songs'), top result cards & videos from ytmSearch(null)
+    // Priority 1: High quality 320kbps JioSaavn streams (100% playable, instant CDN, CORS supported)
+    for (const song of saavnSongs) {
+      const k = cleanKey(song.title, song.artist);
+      if (!seen.has(k) && !seen.has(song.id)) {
+        seen.add(k);
+        seen.add(song.id);
+        combined.push(song);
+      }
+    }
+
+    // Priority 2: Studio songs from YouTube Music (via sigma67/ytmusicapi) for tracks not in Saavn
     for (const song of ytmSongs) {
       const k = cleanKey(song.title, song.artist);
       if (!seen.has(k) && !seen.has(song.id)) {
@@ -242,22 +252,13 @@ app.get('/api/search', async (req, res) => {
       }
     }
 
+    // Priority 3: General YouTube Music items (live tracks, indie videos) not in Saavn
     for (const song of ytmGeneral) {
       const k = cleanKey(song.title, song.artist);
       if (!seen.has(k) && !seen.has(song.id)) {
         seen.add(k);
         seen.add(song.id);
         combined.push(formatYtmSong(song));
-      }
-    }
-
-    // High quality 320kbps JioSaavn streams
-    for (const song of saavnSongs) {
-      const k = cleanKey(song.title, song.artist);
-      if (!seen.has(k) && !seen.has(song.id)) {
-        seen.add(k);
-        seen.add(song.id);
-        combined.push(song);
       }
     }
 
