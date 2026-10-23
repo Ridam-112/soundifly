@@ -232,17 +232,7 @@ app.get('/api/search', async (req, res) => {
     const seen = new Set();
     const cleanKey = (t, a) => `${(t || '').toLowerCase().replace(/[^a-z0-9]/g, '')}::${(a || '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
-    // Priority 1: High quality 320kbps JioSaavn streams (100% playable, instant CDN, CORS supported)
-    for (const song of saavnSongs) {
-      const k = cleanKey(song.title, song.artist);
-      if (!seen.has(k) && !seen.has(song.id)) {
-        seen.add(k);
-        seen.add(song.id);
-        combined.push(song);
-      }
-    }
-
-    // Priority 2: Studio songs from YouTube Music (via sigma67/ytmusicapi) for tracks not in Saavn
+    // Priority 1: Exact Studio tracks from YouTube Music (via sigma67/ytmusicapi) - Primary Authority
     for (const song of ytmSongs) {
       const k = cleanKey(song.title, song.artist);
       if (!seen.has(k) && !seen.has(song.id)) {
@@ -252,13 +242,28 @@ app.get('/api/search', async (req, res) => {
       }
     }
 
-    // Priority 3: General YouTube Music items (live tracks, indie videos) not in Saavn
+    // Priority 2: General YouTube Music items (live tracks, indie videos, top card)
     for (const song of ytmGeneral) {
       const k = cleanKey(song.title, song.artist);
       if (!seen.has(k) && !seen.has(song.id)) {
         seen.add(k);
         seen.add(song.id);
         combined.push(formatYtmSong(song));
+      }
+    }
+
+    // Priority 3: Supplemental JioSaavn tracks (only add if not duplicate and matches query tokens)
+    const qLower = query.toLowerCase().trim();
+    for (const song of saavnSongs) {
+      const k = cleanKey(song.title, song.artist);
+      if (!seen.has(k) && !seen.has(song.id)) {
+        const titleMatch = song.title.toLowerCase().includes(qLower);
+        const artistMatch = song.artist.toLowerCase().includes(qLower);
+        if (titleMatch || artistMatch) {
+          seen.add(k);
+          seen.add(song.id);
+          combined.push(song);
+        }
       }
     }
 
@@ -424,22 +429,97 @@ app.get('/api/image-proxy', (req, res) => {
   }
 });
 
-// 5. REAL-TIME HIGH-SPEED AUDIO STREAMING (302 Direct CDN Redirect with Instant 320kbps playback)
-app.get('/api/stream/:videoId', async (req, res) => {
+// Audio streaming helper: Proxies bytes directly to client with HTTP 206 Partial Content and CORS
+function pipeRemoteStream(targetUrl, req, res) {
+  try {
+    const parsed = new URL(targetUrl);
+    const client = parsed.protocol === 'http:' ? http : https;
+
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Connection': 'keep-alive',
+    };
+
+    if (req.headers.range) {
+      headers['Range'] = req.headers.range;
+    }
+
+    const options = {
+      method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+      headers: headers,
+      timeout: 15000
+    };
+
+    const proxyReq = client.request(targetUrl, options, (proxyRes) => {
+      // Follow redirect if 301, 302, 307, 308
+      if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+        return pipeRemoteStream(proxyRes.headers.location, req, res);
+      }
+
+      const statusCode = proxyRes.statusCode || (req.headers.range ? 206 : 200);
+      res.status(statusCode);
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      const contentType = proxyRes.headers['content-type'] || 'audio/mp4';
+      res.setHeader('Content-Type', contentType);
+
+      if (proxyRes.headers['content-length']) {
+        res.setHeader('Content-Length', proxyRes.headers['content-length']);
+      }
+      if (proxyRes.headers['content-range']) {
+        res.setHeader('Content-Range', proxyRes.headers['content-range']);
+      }
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on('timeout', () => {
+      proxyReq.destroy();
+      if (!res.headersSent) res.status(504).send('Stream Gateway Timeout');
+    });
+
+    proxyReq.on('error', (err) => {
+      console.error('Stream proxy pipe error:', err.message);
+      if (!res.headersSent) res.status(502).send('Stream Gateway Error');
+    });
+
+    req.on('close', () => {
+      proxyReq.destroy();
+    });
+
+    proxyReq.end();
+  } catch (err) {
+    console.error('pipeRemoteStream error:', err);
+    if (!res.headersSent) res.status(500).send('Stream Proxy Error');
+  }
+}
+
+// 5. REAL-TIME AUDIO STREAMING PROXY (Pipes direct audio bytes with CORS & HTTP 206 support)
+app.options('/api/stream/:videoId', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+  res.sendStatus(200);
+});
+
+app.all('/api/stream/:videoId', async (req, res) => {
   const videoId = req.params.videoId;
   if (!videoId || videoId === 'undefined') {
     return res.status(400).send('Invalid videoId');
   }
 
-  // 1. Check in-memory cache first (instant 0ms response)
-  if (streamCache.has(videoId)) {
-    const cached = streamCache.get(videoId);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    return res.redirect(302, cached.url);
-  }
-
-  // 2. If it's a Saavn song ID
+  // Handle Saavn song IDs
   if (videoId.startsWith('saavn_')) {
     const cleanId = videoId.replace('saavn_', '');
     try {
@@ -449,10 +529,7 @@ app.get('/api/stream/:videoId', async (req, res) => {
         const sData = await sRes.json();
         const decUrl = decryptSaavnMediaUrl(sData[cleanId]?.encrypted_media_url);
         if (decUrl) {
-          streamCache.set(videoId, { url: decUrl, timestamp: Date.now() });
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-          return res.redirect(302, decUrl);
+          return pipeRemoteStream(decUrl, req, res);
         }
       }
     } catch (e) {
@@ -460,50 +537,52 @@ app.get('/api/stream/:videoId', async (req, res) => {
     }
   }
 
-  // 3. Try YouTube stream extraction with Node JS runtime
+  // Primary: YouTube audio stream extraction and direct pipe
   try {
     const directUrl = await getDirectStreamUrl(videoId);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    return res.redirect(302, directUrl);
+    if (directUrl) {
+      return pipeRemoteStream(directUrl, req, res);
+    }
   } catch (err) {
     console.error('Stream extraction failed for videoId:', videoId, err.message);
   }
 
-  // 3b. Resilient Server Fallback: resolve song metadata via YouTube oEmbed and match on JioSaavn (320kbps CD Quality)
-  try {
-    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-    const oeRes = await fetch(oembedUrl, { signal: AbortSignal.timeout(3500) });
-    if (oeRes.ok) {
-      const oeData = await oeRes.json();
-      const rawTitle = (oeData.title || '').replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').trim();
-      const rawAuthor = (oeData.author_name || '').replace(/ - Topic$/i, '').trim();
-      const cleanQ = `${rawTitle} ${rawAuthor}`.trim();
-      if (cleanQ.length > 2) {
-        const saavnResults = await searchSaavn(cleanQ);
-        for (const item of saavnResults) {
-          const sTitle = (item.song || item.title || '').toLowerCase().trim();
-          const qTitle = rawTitle.toLowerCase().trim();
-          // Verify title overlap to avoid wrong song substitution
-          if (sTitle.length > 2 && (sTitle.includes(qTitle) || qTitle.includes(sTitle))) {
-            const decUrl = decryptSaavnMediaUrl(item.encrypted_media_url);
-            if (decUrl) {
-              streamCache.set(videoId, { url: decUrl, timestamp: Date.now() });
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-              return res.redirect(302, decUrl);
-            }
-          }
-        }
-      }
-    }
-  } catch (oeErr) {
-    console.error('oEmbed Saavn fallback error:', oeErr.message);
+  // If extraction completely failed, return 404 error without substituting wrong songs
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  return res.status(404).json({ error: 'Audio stream not found' });
+});
+
+// Dedicated Artist Songs Endpoint (YouTube Music sigma67/ytmusicapi authority with strict artist fidelity)
+app.get('/api/artists/:artistName/songs', async (req, res) => {
+  const artistName = req.params.artistName;
+  if (!artistName || !artistName.trim()) {
+    return res.json([]);
   }
 
-  // 4. Guaranteed fallback stream (audio will ALWAYS play without crashing)
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  return res.redirect(302, 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
+  try {
+    const cleanName = artistName.trim();
+    const rawResults = await ytmSearch(cleanName, 'songs');
+    const lowerName = cleanName.toLowerCase();
+
+    // Strict filtering: song artist must match the requested artist name
+    const strictlyFiltered = rawResults.filter(s => {
+      const a = (s.artist || '').toLowerCase();
+      return a.includes(lowerName) || lowerName.includes(a);
+    });
+
+    const finalSongs = strictlyFiltered.length > 0 ? strictlyFiltered : rawResults;
+    const formatted = finalSongs.map(song => ({
+      ...song,
+      audioUrl: `${getBaseUrl(req)}/api/stream/${song.id}`,
+      genre: 'YouTube Music'
+    }));
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(formatted);
+  } catch (err) {
+    console.error('Artist songs error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Helper function to parse LRC time-synced lyrics

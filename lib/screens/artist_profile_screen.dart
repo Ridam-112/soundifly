@@ -6,7 +6,6 @@ import '../providers/playlist_provider.dart';
 import '../providers/user_settings_provider.dart';
 import '../services/yt_music_service.dart';
 import '../data/music_onboarding_data.dart';
-import '../data/mock_data.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_network_image.dart';
 import '../widgets/add_to_playlist_sheet.dart';
@@ -54,22 +53,24 @@ class _ArtistProfileScreenState extends State<ArtistProfileScreen> {
     });
 
     try {
-      final results = await YTMusicService.search(widget.artistName);
+      final results = await YTMusicService.getArtistSongs(widget.artistName);
       if (mounted) {
+        final targetLower = widget.artistName.trim().toLowerCase();
+        // Strict filter: ensure tracks on this profile belong to this artist
+        final filtered = results.where((s) {
+          final a = s.artist.toLowerCase();
+          return a.contains(targetLower) || targetLower.contains(a);
+        }).toList();
+
         setState(() {
-          _popularSongs = results.isNotEmpty
-              ? results
-              : MockData.allSongs.where((s) => s.artist.toLowerCase().contains(widget.artistName.toLowerCase())).toList();
-          if (_popularSongs.isEmpty) {
-            _popularSongs = MockData.allSongs;
-          }
+          _popularSongs = filtered.isNotEmpty ? filtered : results;
           _isLoadingSongs = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _popularSongs = MockData.allSongs;
+          _popularSongs = [];
           _isLoadingSongs = false;
         });
       }

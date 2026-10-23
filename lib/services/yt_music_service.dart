@@ -65,17 +65,7 @@ class YTMusicService {
     String cleanKey(String t, String a) =>
         '${t.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}::${a.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}';
 
-    // 1. First add JioSaavn high-fidelity 320kbps tracks (instant CDN, 100% playable, CORS enabled)
-    for (final s in otherSongs) {
-      final k = cleanKey(s.title, s.artist);
-      if (!seen.contains(k) && !seen.contains(s.id)) {
-        seen.add(k);
-        seen.add(s.id);
-        combined.add(s);
-      }
-    }
-
-    // 2. Add YouTube Music tracks (from sigma67/ytmusicapi) that are not already on JioSaavn
+    // 1. YouTube Music tracks (from sigma67/ytmusicapi) are Priority 1 (Official & Pure Catalog)
     for (final s in ytmSongs) {
       final k = cleanKey(s.title, s.artist);
       if (!seen.contains(k) && !seen.contains(s.id)) {
@@ -85,10 +75,24 @@ class YTMusicService {
       }
     }
 
+    // 2. Supplemental tracks (JioSaavn) if not already present from YouTube Music
+    final qLower = cleanQuery.toLowerCase();
+    for (final s in otherSongs) {
+      final k = cleanKey(s.title, s.artist);
+      if (!seen.contains(k) && !seen.contains(s.id)) {
+        final titleMatch = s.title.toLowerCase().contains(qLower);
+        final artistMatch = s.artist.toLowerCase().contains(qLower);
+        if (titleMatch || artistMatch) {
+          seen.add(k);
+          seen.add(s.id);
+          combined.add(s);
+        }
+      }
+    }
+
     if (combined.isNotEmpty) return combined;
 
     // Step 3: Graceful local search fallback
-    final qLower = cleanQuery.toLowerCase();
     return MockData.allSongs.where((s) {
       return s.title.toLowerCase().contains(qLower) || s.artist.toLowerCase().contains(qLower);
     }).toList();
@@ -298,6 +302,36 @@ class YTMusicService {
     } catch (_) {}
 
     return [];
+  }
+
+  /// 1b. GET ARTIST TOP SONGS (sigma67/ytmusicapi with strict artist fidelity)
+  static Future<List<Song>> getArtistSongs(String artistName) async {
+    final cleanName = artistName.trim();
+    if (cleanName.isEmpty) return [];
+
+    // 1. Try dedicated backend endpoint
+    try {
+      final uri = Uri.parse('$baseUrl/artists/${Uri.encodeComponent(cleanName)}/songs');
+      final res = await http.get(uri).timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200) {
+        final List list = jsonDecode(utf8.decode(res.bodyBytes));
+        final songs = list.map((item) => _parseSong(item as Map<String, dynamic>)).toList();
+        if (songs.isNotEmpty) return songs;
+      }
+    } catch (e) {
+      debugPrint('[YTMusicService] Backend artist songs note: $e');
+    }
+
+    // 2. Direct YTM search with strict artist filter
+    final rawYtm = await _searchYtmDirect(cleanName);
+    final lower = cleanName.toLowerCase();
+    final strictlyFiltered = rawYtm.where((s) {
+      final a = s.artist.toLowerCase();
+      return a.contains(lower) || lower.contains(a);
+    }).toList();
+
+    if (strictlyFiltered.isNotEmpty) return strictlyFiltered;
+    return rawYtm;
   }
 
   /// 2. SEARCH ARTISTS (Curated + Backend + JioSaavn + Deezer Unified Engine)
