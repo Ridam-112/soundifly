@@ -9,7 +9,6 @@ import 'providers/listening_room_provider.dart';
 import 'providers/user_settings_provider.dart';
 import 'services/supabase_service.dart';
 import 'services/soundifly_audio_handler.dart';
-import 'services/stream_proxy_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 
@@ -18,7 +17,6 @@ void main() async {
 
   // Initialize native AudioService for Lock Screen and Notification Shade controls (Spotify-style)
   if (!kIsWeb) {
-    await StreamProxyService.ensureStarted();
     try {
       globalAudioHandler = await AudioService.init(
         builder: () => SoundiflyAudioHandler(),

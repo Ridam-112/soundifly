@@ -4,7 +4,6 @@ import 'package:http/http.dart' as http;
 import 'package:dart_des/dart_des.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../models/song.dart';
-import 'stream_proxy_service.dart';
 
 class AudioStreamResolver {
   static final YoutubeExplode _yt = YoutubeExplode();
@@ -41,7 +40,7 @@ class AudioStreamResolver {
   /// 2. Already-direct CDN URLs (instant)
   /// 3. In-memory cache (instant)
   /// 4. JioSaavn DES decrypt for saavn_ IDs (instant, 320kbps AAC)
-  /// 5. YouTube video ID -> on-device extraction via YouTubeExplode (proxied for Android 200 OK)
+  /// 5. YouTube video ID -> on-device direct extraction via YouTubeExplode
   /// 6. Server proxy stream URL fallback
   static Future<String> resolveStreamUrl(Song song) async {
     final rawUrl = song.audioUrl.trim();
@@ -53,18 +52,12 @@ class AudioStreamResolver {
 
     // 2. If song.audioUrl is already a direct playable CDN audio URL
     if (_isDirectAudioUrl(rawUrl)) {
-      if (rawUrl.contains('googlevideo.com')) {
-        return StreamProxyService.getProxiedUrl(rawUrl);
-      }
       return rawUrl;
     }
 
     // 3. Check in-memory cache (with expiry)
     final cached = _urlCache[song.id];
     if (cached != null && !cached.isExpired) {
-      if (cached.url.contains('googlevideo.com')) {
-        return StreamProxyService.getProxiedUrl(cached.url);
-      }
       return cached.url;
     }
 
@@ -74,16 +67,16 @@ class AudioStreamResolver {
       if (resolved != null) return resolved;
     }
 
-    // 5. If it's a YouTube video ID — extract YouTube stream and proxy for Android
+    // 5. If it's a YouTube video ID — extract on-device YouTube stream directly
     final isYtId = RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(song.id);
     if (isYtId) {
       final ytResolved = await _resolveYouTube(song.id);
       if (ytResolved != null && ytResolved.isNotEmpty) {
-        return StreamProxyService.getProxiedUrl(ytResolved);
+        return ytResolved;
       }
     }
 
-    // 6. Return server streaming proxy URL (pipes bytes directly with HTTP 206 & CORS)
+    // 6. Return server streaming proxy URL (pipes bytes directly with HTTP 206)
     return rawUrl;
   }
 

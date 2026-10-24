@@ -118,28 +118,31 @@ function getDirectStreamUrl(videoId) {
 
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const bin = getYtDlpBin();
-    // Use Node.js runtime for signature evaluation (clean, fast 2s extract)
-    const cmd = `"${bin}" --no-warnings --js-runtimes node -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
+    
+    // Command 1: Clean standard extraction (works on both local Windows and Linux container)
+    const cmd = `"${bin}" --no-warnings -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
 
-    exec(cmd, { timeout: 10000 }, (error, stdout, stderr) => {
-      if (error || !stdout.trim()) {
-        console.error('yt-dlp primary error for videoId', videoId, 'stderr:', stderr);
-        // Fallback: try android player client
-        const fbCmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android" -g -f "ba/b" "${videoUrl}"`;
-        exec(fbCmd, { timeout: 8000 }, (fErr, fOut, fStderr) => {
-          if (fErr || !fOut.trim()) {
-            return reject(new Error('Extraction failed'));
-          }
-          const streamUrl = fOut.trim().split('\n')[0].trim();
-          streamCache.set(videoId, { url: streamUrl, timestamp: Date.now() });
-          resolve(streamUrl);
-        });
-        return;
+    exec(cmd, { timeout: 12000 }, (error, stdout, stderr) => {
+      if (!error && stdout && stdout.trim()) {
+        const streamUrl = stdout.trim().split('\n')[0].trim();
+        streamCache.set(videoId, { url: streamUrl, timestamp: Date.now() });
+        return resolve(streamUrl);
       }
 
-      const streamUrl = stdout.trim().split('\n')[0].trim();
-      streamCache.set(videoId, { url: streamUrl, timestamp: Date.now() });
-      resolve(streamUrl);
+      console.error('yt-dlp primary error for videoId', videoId, 'stderr:', stderr);
+      
+      // Fallback: format 140 or best audio without android client (which hangs on datacenter IPs)
+      const fbCmd = `"${bin}" --no-warnings -g -f "140/ba/b" "${videoUrl}"`;
+      exec(fbCmd, { timeout: 12000 }, (fErr, fOut, fStderr) => {
+        if (!fErr && fOut && fOut.trim()) {
+          const streamUrl = fOut.trim().split('\n')[0].trim();
+          streamCache.set(videoId, { url: streamUrl, timestamp: Date.now() });
+          return resolve(streamUrl);
+        }
+
+        console.error('yt-dlp fallback error for videoId', videoId, 'stderr:', fStderr);
+        return reject(new Error('Extraction failed'));
+      });
     });
   });
 }
@@ -149,7 +152,7 @@ app.get('/api/debug-stream/:videoId', (req, res) => {
   const videoId = req.params.videoId;
   const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const bin = getYtDlpBin();
-  const cmd = `"${bin}" --no-warnings --extractor-args "youtube:player_client=android" -g -f 18/ba/b "${videoUrl}"`;
+  const cmd = `"${bin}" --no-warnings -g -f "ba[ext=m4a]/ba/b" "${videoUrl}"`;
 
   exec(cmd, { timeout: 15000 }, (error, stdout, stderr) => {
     res.json({
