@@ -21,12 +21,7 @@ class MiniPlayer extends StatelessWidget {
 
     return GestureDetector(
       onTap: () {
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          builder: (ctx) => const FullPlayerModal(),
-        );
+        player.openFullPlayer();
       },
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

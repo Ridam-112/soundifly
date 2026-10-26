@@ -43,6 +43,18 @@ class AudioPlayerProvider extends ChangeNotifier {
   /// Monotonically increasing session ID to prevent out-of-order / racing audio playback
   int _playSessionId = 0;
 
+  // Full player persistent modal visibility state
+  bool _showFullPlayer = false;
+  bool get showFullPlayer => _showFullPlayer;
+  void openFullPlayer() {
+    _showFullPlayer = true;
+    notifyListeners();
+  }
+  void closeFullPlayer() {
+    _showFullPlayer = false;
+    notifyListeners();
+  }
+
   // External synchronized YouTube video controller bridge
   bool _isExternalVideoPlayback = false;
   bool get isExternalVideoPlayback => _isExternalVideoPlayback;
@@ -296,6 +308,21 @@ class AudioPlayerProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      if (song.youtubeVideoId.isNotEmpty) {
+        debugPrint('[AudioPlayerProvider] Delegating to synchronized YouTube player: "${song.title}"');
+        _isExternalVideoPlayback = true;
+        _isLoading = false;
+        _isPlaying = true;
+        _playbackErrorMessage = null;
+        try {
+          await _player.stop();
+        } catch (_) {}
+        notifyListeners();
+        _broadcastSync();
+        loadLyricsForCurrentSong();
+        return;
+      }
+
       final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
       // Abort immediately if user switched to another track while resolving
       if (sessionId != _playSessionId) {
@@ -440,6 +467,20 @@ class AudioPlayerProvider extends ChangeNotifier {
   }
 
   Future<void> togglePlayPause() async {
+    if (_isExternalVideoPlayback && onExternalPlayPauseRequested != null) {
+      final willPlay = !_isPlaying;
+      _isPlaying = willPlay;
+      MediaSessionService.updatePlaybackState(
+        isPlaying: willPlay,
+        position: _currentPosition,
+        duration: _totalDuration,
+      );
+      notifyListeners();
+      onExternalPlayPauseRequested!(willPlay);
+      _broadcastSync();
+      return;
+    }
+
     if (_currentSong == null && _queue.isNotEmpty) {
       await playSong(_queue.first);
       return;
@@ -448,7 +489,6 @@ class AudioPlayerProvider extends ChangeNotifier {
     if (_isPlaying) {
       await _player.pause();
       _isPlaying = false;
-      onExternalPlayPauseRequested?.call(false);
       MediaSessionService.updatePlaybackState(
         isPlaying: false,
         position: _currentPosition,
@@ -457,7 +497,6 @@ class AudioPlayerProvider extends ChangeNotifier {
     } else {
       await _player.resume();
       _isPlaying = true;
-      onExternalPlayPauseRequested?.call(true);
       MediaSessionService.updatePlaybackState(
         isPlaying: true,
         position: _currentPosition,
@@ -477,7 +516,11 @@ class AudioPlayerProvider extends ChangeNotifier {
     );
     notifyListeners();
 
-    onExternalSeekRequested?.call(position);
+    if (_isExternalVideoPlayback && onExternalSeekRequested != null) {
+      onExternalSeekRequested!(position);
+      _broadcastSync();
+      return;
+    }
 
     try {
       await _player.seek(position);
@@ -496,7 +539,7 @@ class AudioPlayerProvider extends ChangeNotifier {
         nextIdx = Random().nextInt(_queue.length);
       } while (nextIdx == _currentIndex);
       _currentIndex = nextIdx;
-    } else if (!_isShuffle) {
+    } else {
       if (_currentIndex < _queue.length - 1) {
         _currentIndex++;
       } else if (_loopMode == LoopMode.all) {
@@ -515,12 +558,20 @@ class AudioPlayerProvider extends ChangeNotifier {
             return;
           }
         } catch (_) {}
-        await _player.stop();
+        if (_isExternalVideoPlayback) {
+          onExternalPlayPauseRequested?.call(false);
+        } else {
+          await _player.stop();
+        }
         _isPlaying = false;
         notifyListeners();
         return;
       } else {
-        await _player.stop();
+        if (_isExternalVideoPlayback) {
+          onExternalPlayPauseRequested?.call(false);
+        } else {
+          await _player.stop();
+        }
         _isPlaying = false;
         notifyListeners();
         return;

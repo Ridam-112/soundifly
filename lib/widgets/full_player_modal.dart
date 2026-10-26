@@ -13,7 +13,8 @@ import 'embedded_youtube_player.dart';
 
 class FullPlayerModal extends StatefulWidget {
   final int initialTabIndex;
-  const FullPlayerModal({super.key, this.initialTabIndex = 0});
+  final VoidCallback? onClose;
+  const FullPlayerModal({super.key, this.initialTabIndex = 0, this.onClose});
 
   @override
   State<FullPlayerModal> createState() => _FullPlayerModalState();
@@ -32,6 +33,9 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
       vsync: this,
       initialIndex: widget.initialTabIndex.clamp(0, 2),
     );
+    _tabController.addListener(() {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -112,7 +116,13 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
                     children: [
                       IconButton(
                         icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 30, color: Colors.white),
-                        onPressed: () => Navigator.of(context).pop(),
+                        onPressed: () {
+                          if (widget.onClose != null) {
+                            widget.onClose!();
+                          } else {
+                            Navigator.of(context).pop();
+                          }
+                        },
                       ),
                       Column(
                         children: [
@@ -211,10 +221,10 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
 
                 const SizedBox(height: 16),
 
-                // Tab Content
+                // Tab Content - Preserved with IndexedStack so Player WebView is never destroyed
                 Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
+                  child: IndexedStack(
+                    index: _tabController.index,
                     children: [
                       // TAB 1: Main Artwork & Playback
                       _buildMainPlayerTab(context, song, player, playlistProv, isLiked),

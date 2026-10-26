@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -56,7 +57,8 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
   void didUpdateWidget(covariant EmbeddedYoutubePlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoId != widget.videoId) {
-      _loadVideo();
+      final newId = widget.videoId.trim();
+      _controller.runJavaScript('if (window.loadNewVideo) { window.loadNewVideo("$newId"); } else { location.reload(); }');
     }
   }
 
@@ -72,6 +74,12 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
+      ..addJavaScriptChannel(
+        'SoundiflyBridge',
+        onMessageReceived: (JavaScriptMessage msg) {
+          _handleBridgeMessage(msg.message);
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageFinished: (_) {
@@ -98,6 +106,49 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
     _loadVideo();
   }
 
+  void _handleBridgeMessage(String raw) {
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map || !mounted) return;
+      final player = context.read<AudioPlayerProvider>();
+
+      final type = data['type']?.toString();
+      if (type == 'time') {
+        final posSec = (data['position'] as num?)?.toDouble() ?? 0.0;
+        final durSec = (data['duration'] as num?)?.toDouble() ?? 0.0;
+        player.updateFromExternalVideo(
+          isPlaying: true,
+          position: Duration(milliseconds: (posSec * 1000).toInt()),
+          duration: Duration(milliseconds: (durSec * 1000).toInt()),
+        );
+      } else if (type == 'state') {
+        final state = data['state'] as int?;
+        if (state == 1) {
+          // Playing
+          player.updateFromExternalVideo(
+            isPlaying: true,
+            position: player.currentPosition,
+            duration: player.totalDuration,
+          );
+        } else if (state == 2) {
+          // Paused
+          player.updateFromExternalVideo(
+            isPlaying: false,
+            position: player.currentPosition,
+            duration: player.totalDuration,
+          );
+        } else if (state == 0) {
+          // Ended -> honor loop mode or advance to next song
+          if (player.loopMode == LoopMode.one) {
+            _controller.runJavaScript('window.externalSeek && window.externalSeek(0); window.externalPlay && window.externalPlay();');
+          } else {
+            player.next();
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
   void _loadVideo() {
     final cleanId = widget.videoId.trim();
     final html = '''
@@ -114,6 +165,17 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
 <body>
   <div id="player"></div>
   <script>
+    // Overrides to prevent background pause on visibilitychange
+    try {
+      Object.defineProperty(document, 'hidden', { get: function() { return false; } });
+      Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
+      Object.defineProperty(document, 'webkitVisibilityState', { get: function() { return 'visible'; } });
+      document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
+      window.addEventListener('blur', function(e) { e.stopImmediatePropagation(); }, true);
+    } catch (e) {}
+
+    window.isPlayingIntended = true;
+
     var tag = document.createElement('script');
     tag.src = "https://www.youtube.com/iframe_api";
     var firstScriptTag = document.getElementsByTagName('script')[0];
@@ -131,33 +193,68 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
           'controls': 0,
           'disablekb': 1,
           'fs': 0,
-          'mute': 1,
           'modestbranding': 1,
           'rel': 0,
           'origin': 'https://v5.mp3paw.link'
         },
         events: {
-          'onReady': onPlayerReady
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange
         }
       });
     }
 
     function onPlayerReady(event) {
-      event.target.mute();
+      window.isPlayingIntended = true;
       event.target.playVideo();
+      setInterval(function() {
+        if (ytPlayer && ytPlayer.getCurrentTime && ytPlayer.getPlayerState && ytPlayer.getPlayerState() === 1) {
+          var cur = ytPlayer.getCurrentTime();
+          var dur = ytPlayer.getDuration();
+          if (window.SoundiflyBridge) {
+            window.SoundiflyBridge.postMessage(JSON.stringify({
+              type: 'time',
+              position: cur,
+              duration: dur
+            }));
+          }
+        }
+      }, 300);
+    }
+
+    function onPlayerStateChange(event) {
+      if (window.SoundiflyBridge) {
+        window.SoundiflyBridge.postMessage(JSON.stringify({
+          type: 'state',
+          state: event.data
+        }));
+      }
+      // Resume if Android background suspended playback while still intended
+      if (event.data === 2 && window.isPlayingIntended) {
+        setTimeout(function() {
+          if (window.isPlayingIntended && ytPlayer && ytPlayer.playVideo) {
+            ytPlayer.playVideo();
+          }
+        }, 150);
+      }
     }
 
     window.externalPlay = function() {
-      if (ytPlayer && ytPlayer.playVideo) {
-        ytPlayer.mute();
-        ytPlayer.playVideo();
-      }
+      window.isPlayingIntended = true;
+      if (ytPlayer && ytPlayer.playVideo) ytPlayer.playVideo();
     };
     window.externalPause = function() {
+      window.isPlayingIntended = false;
       if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();
     };
     window.externalSeek = function(sec) {
       if (ytPlayer && ytPlayer.seekTo) ytPlayer.seekTo(sec, true);
+    };
+    window.loadNewVideo = function(newId) {
+      window.isPlayingIntended = true;
+      if (ytPlayer && ytPlayer.loadVideoById) {
+        ytPlayer.loadVideoById(newId);
+      }
     };
   </script>
 </body>

@@ -34,11 +34,33 @@ class _ResponsiveScaffoldState extends State<ResponsiveScaffold> {
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width >= 900;
+    final player = context.watch<AudioPlayerProvider>();
 
-    return Scaffold(
-      backgroundColor: AppColors.bgDark,
-      body: isDesktop ? _buildDesktopLayout(context) : _buildMobileLayout(context),
-      bottomNavigationBar: isDesktop ? null : _buildMobileBottomNav(context),
+    return PopScope(
+      canPop: !player.showFullPlayer,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          player.closeFullPlayer();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.bgDark,
+        body: Stack(
+          children: [
+            isDesktop ? _buildDesktopLayout(context) : _buildMobileLayout(context),
+            if (player.currentSong != null)
+              Positioned.fill(
+                child: Offstage(
+                  offstage: !player.showFullPlayer,
+                  child: FullPlayerModal(
+                    onClose: () => player.closeFullPlayer(),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        bottomNavigationBar: isDesktop ? null : _buildMobileBottomNav(context),
+      ),
     );
   }
 
@@ -470,12 +492,7 @@ class DesktopBottomPlayerBar extends StatelessWidget {
                   tooltip: 'Lyrics & Queue',
                   icon: const Icon(Icons.queue_music_rounded, color: AppColors.textSecondary),
                   onPressed: () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      backgroundColor: Colors.transparent,
-                      builder: (ctx) => const FullPlayerModal(),
-                    );
+                    player.openFullPlayer();
                   },
                 ),
                 const Icon(Icons.volume_up_rounded, color: AppColors.textSecondary, size: 20),
