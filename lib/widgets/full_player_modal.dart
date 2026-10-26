@@ -293,6 +293,7 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
         ],
       ),
     ),
+    ),
   );
 }
 

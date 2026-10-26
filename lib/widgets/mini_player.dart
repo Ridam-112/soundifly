@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import '../providers/audio_player_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../theme/app_theme.dart';
-import 'full_player_modal.dart';
 import 'app_network_image.dart';
 
 class MiniPlayer extends StatelessWidget {
