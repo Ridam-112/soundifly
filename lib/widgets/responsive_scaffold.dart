@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/audio_player_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../providers/listening_room_provider.dart';
@@ -324,19 +325,39 @@ class DesktopBottomPlayerBar extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(song.artist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                       if (player.playbackErrorMessage != null)
-                        InkWell(
-                          onTap: () {
-                            player.clearPlaybackError();
-                            player.playSong(song);
-                          },
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.refresh_rounded, color: AppColors.primary, size: 12),
-                              SizedBox(width: 3),
-                              Text('Retry playback', style: TextStyle(color: AppColors.primary, fontSize: 11, fontWeight: FontWeight.bold)),
-                            ],
-                          ),
+                        Wrap(
+                          spacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            InkWell(
+                              onTap: () {
+                                player.clearPlaybackError();
+                                player.playSong(song);
+                              },
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.refresh_rounded, color: AppColors.primary, size: 12),
+                                  SizedBox(width: 3),
+                                  Text('Retry', style: TextStyle(color: AppColors.primary, fontSize: 11, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () {
+                                final ytUrl = song.youtubeEmbedUrl.isNotEmpty ? song.youtubeEmbedUrl : song.youtubeWatchUrl;
+                                launchUrl(Uri.parse(ytUrl), mode: LaunchMode.inAppWebView);
+                              },
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.open_in_new_rounded, color: Colors.amberAccent, size: 12),
+                                  SizedBox(width: 3),
+                                  Text('YouTube', style: TextStyle(color: Colors.amberAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
                     ],
                   ),

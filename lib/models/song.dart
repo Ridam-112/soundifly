@@ -47,6 +47,39 @@ class Song {
 
   bool get isPlayable => audioUrl.isNotEmpty;
 
+  /// Extracts official 11-char YouTube Video ID if present
+  String get youtubeVideoId {
+    if (RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(id)) return id;
+    if (audioUrl.contains('/stream/')) {
+      final parts = audioUrl.split('/stream/');
+      if (parts.length > 1) {
+        final clean = parts[1].split('?').first;
+        if (RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(clean)) {
+          return clean;
+        }
+      }
+    }
+    return '';
+  }
+
+  /// Direct YouTube official embedded player URL
+  String get youtubeEmbedUrl {
+    final ytId = youtubeVideoId;
+    if (ytId.isNotEmpty) {
+      return 'https://www.youtube.com/embed/$ytId?autoplay=1';
+    }
+    return 'https://www.youtube.com/results?search_query=${Uri.encodeComponent('$title $artist')}';
+  }
+
+  /// Direct YouTube watch or web link
+  String get youtubeWatchUrl {
+    final ytId = youtubeVideoId;
+    if (ytId.isNotEmpty) {
+      return 'https://www.youtube.com/watch?v=$ytId';
+    }
+    return 'https://www.youtube.com/results?search_query=${Uri.encodeComponent('$title $artist')}';
+  }
+
   String get formattedDuration {
     final minutes = duration.inMinutes;
     final seconds = duration.inSeconds % 60;

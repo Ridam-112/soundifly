@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/audio_player_provider.dart';
 import '../providers/playlist_provider.dart';
 import '../providers/listening_room_provider.dart';
@@ -135,23 +136,36 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
                           ),
                         ],
                       ),
-                      IconButton(
-                        icon: Icon(
-                          roomProv.isInRoom ? Icons.group : Icons.share_outlined,
-                          color: roomProv.isInRoom ? AppColors.primary : Colors.white,
-                        ),
-                        onPressed: () {
-                          if (roomProv.isInRoom) {
-                            _showInviteDialog(context, song);
-                          } else {
-                            SongShareModal.show(
-                              context,
-                              song: song,
-                              lyrics: player.currentLyrics,
-                              activeLyricIndex: player.activeLyricIndex,
-                            );
-                          }
-                        },
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.smart_display_rounded, color: Colors.white70, size: 24),
+                            tooltip: 'Watch / Embed on YouTube',
+                            onPressed: () {
+                              final ytUrl = song.youtubeEmbedUrl.isNotEmpty ? song.youtubeEmbedUrl : song.youtubeWatchUrl;
+                              launchUrl(Uri.parse(ytUrl), mode: LaunchMode.inAppWebView);
+                            },
+                          ),
+                          IconButton(
+                            icon: Icon(
+                              roomProv.isInRoom ? Icons.group : Icons.share_outlined,
+                              color: roomProv.isInRoom ? AppColors.primary : Colors.white,
+                            ),
+                            onPressed: () {
+                              if (roomProv.isInRoom) {
+                                _showInviteDialog(context, song);
+                              } else {
+                                SongShareModal.show(
+                                  context,
+                                  song: song,
+                                  lyrics: player.currentLyrics,
+                                  activeLyricIndex: player.activeLyricIndex,
+                                );
+                              }
+                            },
+                          ),
+                        ],
                       ),
                     ],
                   ),

@@ -40,6 +40,9 @@ class AudioPlayerProvider extends ChangeNotifier {
   static const Duration playbackHistoryThreshold = Duration(seconds: 10);
   bool _historyRecordedForCurrentTrack = false;
 
+  /// Monotonically increasing session ID to prevent out-of-order / racing audio playback
+  int _playSessionId = 0;
+
   // Real-time synchronization callback for Listen Together room
   void Function(Song? song, bool isPlaying, Duration position)? onPlaybackStateChanged;
 
@@ -198,6 +201,15 @@ class AudioPlayerProvider extends ChangeNotifier {
   }
 
   Future<void> playSong(Song song, {List<Song>? playlist, int? startIndex}) async {
+    // Generate new unique session ID to instantly cancel any previous pending/slow song requests
+    final sessionId = ++_playSessionId;
+
+    // Immediately halt previous player output to prevent audio overlap or ghost playback
+    try {
+      await _player.stop();
+    } catch (_) {}
+    if (sessionId != _playSessionId) return;
+
     if (playlist != null && playlist.isNotEmpty) {
       _queue = List.from(playlist);
       _currentIndex = startIndex ?? _queue.indexWhere((s) => s.id == song.id);
@@ -238,38 +250,69 @@ class AudioPlayerProvider extends ChangeNotifier {
 
     try {
       final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
+      // Abort immediately if user switched to another track while resolving
+      if (sessionId != _playSessionId) {
+        debugPrint('[AudioPlayerProvider] Discarding resolve for "${song.title}" (stale session $sessionId)');
+        return;
+      }
+
       debugPrint('[AudioPlayerProvider] Starting playback: $playableUrl');
       final mime = (playableUrl.contains('.mp4') || playableUrl.contains('mime=audio%2Fmp4')) ? 'audio/mp4' : null;
       await _player.play(UrlSource(playableUrl, mimeType: mime));
+
+      // Re-verify after async play call finishes
+      if (sessionId != _playSessionId) {
+        debugPrint('[AudioPlayerProvider] Stopping stale playback after play finished for "${song.title}"');
+        await _player.stop();
+        return;
+      }
+
       _isPlaying = true;
       _isLoading = false;
       _playbackErrorMessage = null;
     } catch (e) {
+      if (sessionId != _playSessionId) return;
       debugPrint('[AudioPlayerProvider] Initial play attempt failed: $e');
       try {
-        await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(const Duration(milliseconds: 150));
+        if (sessionId != _playSessionId) return;
+
         final fallbackUrl = await AudioStreamResolver.resolveFallbackStreamUrl(song);
+        if (sessionId != _playSessionId) return;
+
         if (fallbackUrl != null && fallbackUrl.isNotEmpty) {
           debugPrint('[AudioPlayerProvider] Playing smart fallback URL: $fallbackUrl');
           final mime = (fallbackUrl.contains('.mp4') || fallbackUrl.contains('mime=audio%2Fmp4')) ? 'audio/mp4' : null;
           await _player.play(UrlSource(fallbackUrl, mimeType: mime));
+          if (sessionId != _playSessionId) {
+            await _player.stop();
+            return;
+          }
           _isPlaying = true;
           _isLoading = false;
           _playbackErrorMessage = null;
         } else {
           final retryUrl = await AudioStreamResolver.resolveStreamUrl(song);
+          if (sessionId != _playSessionId) return;
           await _player.play(UrlSource(retryUrl));
+          if (sessionId != _playSessionId) {
+            await _player.stop();
+            return;
+          }
           _isPlaying = true;
           _isLoading = false;
           _playbackErrorMessage = null;
         }
       } catch (err2) {
+        if (sessionId != _playSessionId) return;
         debugPrint('Second play attempt error: $err2');
         _isPlaying = false;
         _isLoading = false;
         _playbackErrorMessage = 'Could not load audio. Please tap to try again.';
       }
     }
+
+    if (sessionId != _playSessionId) return;
     notifyListeners();
     _broadcastSync();
 
