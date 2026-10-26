@@ -296,32 +296,10 @@ class AudioPlayerProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // If external video controller is attached and song has YouTube ID, delegate directly
-      if (_isExternalVideoPlayback && song.youtubeVideoId.isNotEmpty) {
-        debugPrint('[AudioPlayerProvider] Delegating playback to synchronized video player: "${song.title}"');
-        _isLoading = false;
-        _isPlaying = true;
-        _playbackErrorMessage = null;
-        notifyListeners();
-        _broadcastSync();
-        loadLyricsForCurrentSong();
-        return;
-      }
-
       final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
       // Abort immediately if user switched to another track while resolving
       if (sessionId != _playSessionId) {
         debugPrint('[AudioPlayerProvider] Discarding resolve for "${song.title}" (stale session $sessionId)');
-        return;
-      }
-
-      if (_isExternalVideoPlayback && song.youtubeVideoId.isNotEmpty) {
-        _isLoading = false;
-        _isPlaying = true;
-        _playbackErrorMessage = null;
-        notifyListeners();
-        _broadcastSync();
-        loadLyricsForCurrentSong();
         return;
       }
 
@@ -338,6 +316,9 @@ class AudioPlayerProvider extends ChangeNotifier {
 
       _isPlaying = true;
       _isLoading = false;
+      _playbackErrorMessage = null;
+      onExternalPlayPauseRequested?.call(true);
+      notifyListeners();
       _playbackErrorMessage = null;
     } catch (e) {
       if (sessionId != _playSessionId) return;
@@ -459,20 +440,6 @@ class AudioPlayerProvider extends ChangeNotifier {
   }
 
   Future<void> togglePlayPause() async {
-    if (_isExternalVideoPlayback && onExternalPlayPauseRequested != null) {
-      final willPlay = !_isPlaying;
-      _isPlaying = willPlay;
-      MediaSessionService.updatePlaybackState(
-        isPlaying: willPlay,
-        position: _currentPosition,
-        duration: _totalDuration,
-      );
-      notifyListeners();
-      onExternalPlayPauseRequested!(willPlay);
-      _broadcastSync();
-      return;
-    }
-
     if (_currentSong == null && _queue.isNotEmpty) {
       await playSong(_queue.first);
       return;
@@ -481,6 +448,7 @@ class AudioPlayerProvider extends ChangeNotifier {
     if (_isPlaying) {
       await _player.pause();
       _isPlaying = false;
+      onExternalPlayPauseRequested?.call(false);
       MediaSessionService.updatePlaybackState(
         isPlaying: false,
         position: _currentPosition,
@@ -489,6 +457,7 @@ class AudioPlayerProvider extends ChangeNotifier {
     } else {
       await _player.resume();
       _isPlaying = true;
+      onExternalPlayPauseRequested?.call(true);
       MediaSessionService.updatePlaybackState(
         isPlaying: true,
         position: _currentPosition,
@@ -508,11 +477,7 @@ class AudioPlayerProvider extends ChangeNotifier {
     );
     notifyListeners();
 
-    if (_isExternalVideoPlayback && onExternalSeekRequested != null) {
-      onExternalSeekRequested!(position);
-      _broadcastSync();
-      return;
-    }
+    onExternalSeekRequested?.call(position);
 
     try {
       await _player.seek(position);
@@ -525,9 +490,13 @@ class AudioPlayerProvider extends ChangeNotifier {
   Future<void> next() async {
     if (_queue.isEmpty) return;
 
-    if (_isShuffle) {
-      _currentIndex = Random().nextInt(_queue.length);
-    } else {
+    if (_isShuffle && _queue.length > 1) {
+      int nextIdx;
+      do {
+        nextIdx = Random().nextInt(_queue.length);
+      } while (nextIdx == _currentIndex);
+      _currentIndex = nextIdx;
+    } else if (!_isShuffle) {
       if (_currentIndex < _queue.length - 1) {
         _currentIndex++;
       } else if (_loopMode == LoopMode.all) {
@@ -570,7 +539,13 @@ class AudioPlayerProvider extends ChangeNotifier {
       return;
     }
 
-    if (_currentIndex > 0) {
+    if (_isShuffle && _queue.length > 1) {
+      int prevIdx;
+      do {
+        prevIdx = Random().nextInt(_queue.length);
+      } while (prevIdx == _currentIndex);
+      _currentIndex = prevIdx;
+    } else if (_currentIndex > 0) {
       _currentIndex--;
     } else if (_loopMode == LoopMode.all) {
       _currentIndex = _queue.length - 1;

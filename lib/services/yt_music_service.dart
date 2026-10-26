@@ -134,23 +134,30 @@ class YTMusicService {
               : (parts.length == 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : 210);
 
           String artist = 'Soundifly Artist';
-          if (rawTitle.contains(' - ')) {
-            artist = rawTitle.split(' - ').first.trim();
-          } else if (rawTitle.contains(' by ')) {
-            artist = rawTitle.split(' by ').last.split('|').first.trim();
+          String cleanSongTitle = title;
+          if (rawTitle.contains(' by ')) {
+            final parts = rawTitle.split(' by ');
+            cleanSongTitle = parts.first.trim();
+            artist = parts.last.split('|').first.split('-').first.trim();
+          } else if (rawTitle.contains(' - ')) {
+            final parts = rawTitle.split(' - ');
+            artist = parts.first.trim();
+            cleanSongTitle = parts.sublist(1).join(' - ').split('|').first.trim();
           } else if (rawTitle.contains('|')) {
-            artist = rawTitle.split('|').last.trim();
+            final parts = rawTitle.split('|');
+            cleanSongTitle = parts.first.trim();
+            artist = parts.last.trim();
           }
 
           final thumb = item['imgSrc']?.toString() ?? 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
 
           songs.add(Song(
             id: videoId,
-            title: title,
+            title: cleanSongTitle.isNotEmpty ? cleanSongTitle : title,
             artist: artist.isNotEmpty ? artist : 'Soundifly Artist',
             album: 'Single',
             coverUrl: thumb,
-            audioUrl: '$baseUrl/stream/$videoId',
+            audioUrl: '$baseUrl/api/stream/$videoId',
             duration: Duration(seconds: durSec),
             genre: 'YouTube Music',
             releaseYear: '2026',

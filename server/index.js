@@ -508,7 +508,7 @@ function pipeRemoteStream(targetUrl, req, res) {
 }
 
 // 5. REAL-TIME AUDIO STREAMING PROXY (Pipes direct audio bytes with CORS & HTTP 206 support)
-app.options('/api/stream/:videoId', (req, res) => {
+app.options(['/api/stream/:videoId', '/stream/:videoId'], (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept');
@@ -516,7 +516,7 @@ app.options('/api/stream/:videoId', (req, res) => {
   res.sendStatus(200);
 });
 
-app.all('/api/stream/:videoId', async (req, res) => {
+app.all(['/api/stream/:videoId', '/stream/:videoId'], async (req, res) => {
   const videoId = req.params.videoId;
   if (!videoId || videoId === 'undefined') {
     return res.status(400).send('Invalid videoId');

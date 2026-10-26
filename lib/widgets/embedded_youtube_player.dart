@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -73,16 +72,20 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
-      ..addJavaScriptChannel(
-        'SoundiflyBridge',
-        onMessageReceived: (JavaScriptMessage msg) {
-          _handleBridgeMessage(msg.message);
-        },
-      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageFinished: (_) {
-            if (mounted) setState(() => _isLoading = false);
+            if (mounted) {
+              setState(() => _isLoading = false);
+              final player = context.read<AudioPlayerProvider>();
+              final curSec = player.currentPosition.inMilliseconds / 1000.0;
+              if (curSec > 0) {
+                _controller.runJavaScript('window.externalSeek && window.externalSeek($curSec);');
+              }
+              if (!player.isPlaying) {
+                _controller.runJavaScript('window.externalPause && window.externalPause();');
+              }
+            }
           },
         ),
       );
@@ -93,45 +96,6 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
     }
 
     _loadVideo();
-  }
-
-  void _handleBridgeMessage(String raw) {
-    try {
-      final data = jsonDecode(raw);
-      if (data is! Map || !mounted) return;
-      final player = context.read<AudioPlayerProvider>();
-
-      final type = data['type']?.toString();
-      if (type == 'time') {
-        final posSec = (data['position'] as num?)?.toDouble() ?? 0.0;
-        final durSec = (data['duration'] as num?)?.toDouble() ?? 0.0;
-        player.updateFromExternalVideo(
-          isPlaying: true,
-          position: Duration(milliseconds: (posSec * 1000).toInt()),
-          duration: Duration(milliseconds: (durSec * 1000).toInt()),
-        );
-      } else if (type == 'state') {
-        final state = data['state'] as int?;
-        if (state == 1) {
-          // Playing
-          player.updateFromExternalVideo(
-            isPlaying: true,
-            position: player.currentPosition,
-            duration: player.totalDuration,
-          );
-        } else if (state == 2) {
-          // Paused
-          player.updateFromExternalVideo(
-            isPlaying: false,
-            position: player.currentPosition,
-            duration: player.totalDuration,
-          );
-        } else if (state == 0) {
-          // Ended -> advance to next song in queue
-          player.next();
-        }
-      }
-    } catch (_) {}
   }
 
   void _loadVideo() {
@@ -167,45 +131,27 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
           'controls': 0,
           'disablekb': 1,
           'fs': 0,
+          'mute': 1,
           'modestbranding': 1,
           'rel': 0,
           'origin': 'https://v5.mp3paw.link'
         },
         events: {
-          'onReady': onPlayerReady,
-          'onStateChange': onPlayerStateChange
+          'onReady': onPlayerReady
         }
       });
     }
 
     function onPlayerReady(event) {
+      event.target.mute();
       event.target.playVideo();
-      setInterval(function() {
-        if (ytPlayer && ytPlayer.getCurrentTime && ytPlayer.getPlayerState && ytPlayer.getPlayerState() === 1) {
-          var cur = ytPlayer.getCurrentTime();
-          var dur = ytPlayer.getDuration();
-          if (window.SoundiflyBridge) {
-            window.SoundiflyBridge.postMessage(JSON.stringify({
-              type: 'time',
-              position: cur,
-              duration: dur
-            }));
-          }
-        }
-      }, 300);
-    }
-
-    function onPlayerStateChange(event) {
-      if (window.SoundiflyBridge) {
-        window.SoundiflyBridge.postMessage(JSON.stringify({
-          type: 'state',
-          state: event.data
-        }));
-      }
     }
 
     window.externalPlay = function() {
-      if (ytPlayer && ytPlayer.playVideo) ytPlayer.playVideo();
+      if (ytPlayer && ytPlayer.playVideo) {
+        ytPlayer.mute();
+        ytPlayer.playVideo();
+      }
     };
     window.externalPause = function() {
       if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();

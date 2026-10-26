@@ -76,10 +76,13 @@ class AudioStreamResolver {
     }
 
     // 6. If not on Saavn (e.g. YouTube-exclusive track, remix, podcast), extract on-device YouTube stream directly
-    final isYtId = RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(song.id);
-    if (isYtId) {
-      final ytResolved = await _resolveYouTube(song.id);
+    final ytId = song.youtubeVideoId.isNotEmpty
+        ? song.youtubeVideoId
+        : (RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(song.id) ? song.id : '');
+    if (ytId.isNotEmpty) {
+      final ytResolved = await _resolveYouTube(ytId);
       if (ytResolved != null && ytResolved.isNotEmpty) {
+        _urlCache[song.id] = _CachedUrl(ytResolved);
         return ytResolved;
       }
     }
@@ -101,9 +104,11 @@ class AudioStreamResolver {
     }
 
     // 2. Attempt on-device YouTube stream resolution
-    final isYtId = RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(song.id);
-    if (isYtId) {
-      final ytResolved = await _resolveYouTube(song.id);
+    final ytId = song.youtubeVideoId.isNotEmpty
+        ? song.youtubeVideoId
+        : (RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(song.id) ? song.id : '');
+    if (ytId.isNotEmpty) {
+      final ytResolved = await _resolveYouTube(ytId);
       if (ytResolved != null && ytResolved.isNotEmpty) {
         _urlCache[song.id] = _CachedUrl(ytResolved);
         return ytResolved;
@@ -193,7 +198,7 @@ class AudioStreamResolver {
   /// Extract YouTube audio stream on-device, preferring M4A/AAC (universal) over webm/opus
   static Future<String?> _resolveYouTube(String videoId) async {
     try {
-      final manifest = await _yt.videos.streamsClient.getManifest(videoId).timeout(const Duration(seconds: 4));
+      final manifest = await _yt.videos.streamsClient.getManifest(videoId).timeout(const Duration(seconds: 8));
       final audioStreams = manifest.audioOnly.toList();
 
       if (audioStreams.isEmpty) return null;
