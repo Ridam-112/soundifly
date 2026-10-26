@@ -132,11 +132,13 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
           );
         } else if (state == 2) {
           // Paused
-          player.updateFromExternalVideo(
-            isPlaying: false,
-            position: player.currentPosition,
-            duration: player.totalDuration,
-          );
+          if (!player.isPlaying) {
+            player.updateFromExternalVideo(
+              isPlaying: false,
+              position: player.currentPosition,
+              duration: player.totalDuration,
+            );
+          }
         } else if (state == 0) {
           // Ended -> honor loop mode or advance to next song
           if (player.loopMode == LoopMode.one) {
@@ -224,20 +226,32 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
       }, 300);
     }
 
+    // Keep Chromium audio mixer active for background playback
+    try {
+      window.AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (window.AudioContext) {
+        var audioCtx = new AudioContext();
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        gain.gain.value = 0.0001;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+      }
+    } catch (e) {}
+
     function onPlayerStateChange(event) {
+      if (event.data === 2 && window.isPlayingIntended) {
+        if (ytPlayer && ytPlayer.playVideo) {
+          ytPlayer.playVideo();
+        }
+        return;
+      }
       if (window.SoundiflyBridge) {
         window.SoundiflyBridge.postMessage(JSON.stringify({
           type: 'state',
           state: event.data
         }));
-      }
-      // Resume if Android background suspended playback while still intended
-      if (event.data === 2 && window.isPlayingIntended) {
-        setTimeout(function() {
-          if (window.isPlayingIntended && ytPlayer && ytPlayer.playVideo) {
-            ytPlayer.playVideo();
-          }
-        }, 150);
       }
     }
 

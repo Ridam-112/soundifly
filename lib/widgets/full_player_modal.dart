@@ -23,6 +23,7 @@ class FullPlayerModal extends StatefulWidget {
 class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   bool _showVideo = true;
+  double _dragOffset = 0.0;
 
   @override
   void initState() {
@@ -65,16 +66,34 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
+      onVerticalDragUpdate: (details) {
+        if (details.primaryDelta != null) {
+          setState(() {
+            _dragOffset = (_dragOffset + details.primaryDelta!).clamp(0.0, 300.0);
+          });
+        }
+      },
       onVerticalDragEnd: (details) {
-        if (details.primaryVelocity != null && details.primaryVelocity! > 200) {
+        final velocity = details.primaryVelocity ?? 0.0;
+        if (velocity > 200 || _dragOffset > 70) {
+          setState(() => _dragOffset = 0.0);
           if (widget.onClose != null) {
             widget.onClose!();
           } else {
             Navigator.of(context).pop();
           }
+        } else {
+          setState(() => _dragOffset = 0.0);
         }
       },
-      child: Container(
+      onVerticalDragCancel: () {
+        setState(() => _dragOffset = 0.0);
+      },
+      child: AnimatedContainer(
+        duration: _dragOffset == 0 ? const Duration(milliseconds: 180) : Duration.zero,
+        curve: Curves.easeOutCubic,
+        transform: Matrix4.translationValues(0, _dragOffset, 0),
+        child: Container(
         height: MediaQuery.of(context).size.height,
         width: MediaQuery.of(context).size.width,
         decoration: const BoxDecoration(

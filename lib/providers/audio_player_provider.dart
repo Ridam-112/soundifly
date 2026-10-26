@@ -8,6 +8,7 @@ import '../services/media_session_service.dart';
 import '../services/supabase_music_sync_service.dart';
 import '../services/yt_music_service.dart';
 import '../services/audio_stream_resolver.dart';
+import '../services/battery_optimization_service.dart';
 
 enum LoopMode { off, all, one }
 
@@ -316,10 +317,23 @@ class AudioPlayerProvider extends ChangeNotifier {
         _playbackErrorMessage = null;
         try {
           await _player.stop();
+          if (!kIsWeb) {
+            await _player.setReleaseMode(ReleaseMode.loop);
+            await _player.setVolume(0.0);
+            await _player.play(AssetSource('audio/silence.mp3'));
+          }
         } catch (_) {}
         notifyListeners();
         _broadcastSync();
         loadLyricsForCurrentSong();
+
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+          BatteryOptimizationService.isIgnoringBatteryOptimizations().then((ignored) {
+            if (!ignored) {
+              BatteryOptimizationService.requestIgnoreBatteryOptimizations();
+            }
+          });
+        }
         return;
       }
 
@@ -472,6 +486,15 @@ class AudioPlayerProvider extends ChangeNotifier {
     if (_isExternalVideoPlayback && onExternalPlayPauseRequested != null) {
       final willPlay = !_isPlaying;
       _isPlaying = willPlay;
+      if (!kIsWeb) {
+        try {
+          if (willPlay) {
+            await _player.resume();
+          } else {
+            await _player.pause();
+          }
+        } catch (_) {}
+      }
       MediaSessionService.updatePlaybackState(
         isPlaying: willPlay,
         position: _currentPosition,

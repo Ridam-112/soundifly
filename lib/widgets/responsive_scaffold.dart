@@ -50,35 +50,47 @@ class _ResponsiveScaffoldState extends State<ResponsiveScaffold> {
             isDesktop ? _buildDesktopLayout(context) : _buildMobileLayout(context),
             if (player.currentSong != null)
               Positioned.fill(
-                child: Offstage(
-                  offstage: !player.showFullPlayer,
-                  child: FullPlayerModal(
-                    onClose: () => player.closeFullPlayer(),
+                child: AnimatedSlide(
+                  offset: player.showFullPlayer ? Offset.zero : const Offset(0, 1),
+                  duration: const Duration(milliseconds: 280),
+                  curve: player.showFullPlayer ? Curves.easeOutCubic : Curves.easeInCubic,
+                  child: IgnorePointer(
+                    ignoring: !player.showFullPlayer,
+                    child: FullPlayerModal(
+                      onClose: () => player.closeFullPlayer(),
+                    ),
                   ),
                 ),
               ),
           ],
         ),
-        bottomNavigationBar: (isDesktop || player.showFullPlayer) ? null : _buildMobileBottomNav(context),
+        bottomNavigationBar: null,
       ),
     );
   }
 
   // Mobile / Tablet Layout (< 900px)
   Widget _buildMobileLayout(BuildContext context) {
-    return Stack(
+    return Column(
       children: [
-        IndexedStack(
-          index: _currentIndex,
-          children: _screens,
+        Expanded(
+          child: Stack(
+            children: [
+              IndexedStack(
+                index: _currentIndex,
+                children: _screens,
+              ),
+              // Floating Mini Player right above Bottom Bar
+              const Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: MiniPlayer(),
+              ),
+            ],
+          ),
         ),
-        // Floating Mini Player right above Bottom Bar
-        const Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: MiniPlayer(),
-        ),
+        _buildMobileBottomNav(context),
       ],
     );
   }

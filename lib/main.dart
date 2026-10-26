@@ -27,7 +27,7 @@ void main() async {
           androidNotificationIcon: 'drawable/ic_stat_music',
           androidShowNotificationBadge: true,
           androidNotificationOngoing: true,
-          androidStopForegroundOnPause: true,
+          androidStopForegroundOnPause: false,
           androidNotificationClickStartsActivity: true,
         ),
       );
