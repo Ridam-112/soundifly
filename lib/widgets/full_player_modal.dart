@@ -63,50 +63,81 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
 
     final isLiked = playlistProv.isSongLiked(song.id);
 
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.94,
-      decoration: const BoxDecoration(
-        color: AppColors.bgDark,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Stack(
-        children: [
-          // Ambient Gradient Glow from top
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 300,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-                gradient: RadialGradient(
-                  center: const Alignment(0, -0.6),
-                  radius: 1.2,
-                  colors: [
-                    AppColors.primary.withValues(alpha: 0.25),
-                    Colors.transparent,
-                  ],
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onVerticalDragEnd: (details) {
+        if (details.primaryVelocity != null && details.primaryVelocity! > 200) {
+          if (widget.onClose != null) {
+            widget.onClose!();
+          } else {
+            Navigator.of(context).pop();
+          }
+        }
+      },
+      child: Container(
+        height: MediaQuery.of(context).size.height,
+        width: MediaQuery.of(context).size.width,
+        decoration: const BoxDecoration(
+          color: AppColors.bgDark,
+        ),
+        child: Stack(
+          children: [
+            // Ambient Gradient Glow from top
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 300,
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -0.6),
+                    radius: 1.2,
+                    colors: [
+                      AppColors.primary.withValues(alpha: 0.25),
+                      Colors.transparent,
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
 
-          SafeArea(
-            child: Column(
-              children: [
-                // Modal Handle
-                const SizedBox(height: 12),
-                Center(
-                  child: Container(
-                    width: 44,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(10),
+            SafeArea(
+              child: Column(
+                children: [
+                  // Modal Drag Handle
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (widget.onClose != null) {
+                        widget.onClose!();
+                      } else {
+                        Navigator.of(context).pop();
+                      }
+                    },
+                    onVerticalDragEnd: (details) {
+                      if (details.primaryVelocity != null && details.primaryVelocity! > 100) {
+                        if (widget.onClose != null) {
+                          widget.onClose!();
+                        } else {
+                          Navigator.of(context).pop();
+                        }
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 10, bottom: 6),
+                      child: Center(
+                        child: Container(
+                          width: 44,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                ),
 
                 // Top Header (Down button, Playing From info, Together Badge)
                 Padding(
@@ -242,8 +273,9 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildMainPlayerTab(
     BuildContext context,

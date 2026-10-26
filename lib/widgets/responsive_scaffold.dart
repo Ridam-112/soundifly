@@ -59,7 +59,7 @@ class _ResponsiveScaffoldState extends State<ResponsiveScaffold> {
               ),
           ],
         ),
-        bottomNavigationBar: isDesktop ? null : _buildMobileBottomNav(context),
+        bottomNavigationBar: (isDesktop || player.showFullPlayer) ? null : _buildMobileBottomNav(context),
       ),
     );
   }

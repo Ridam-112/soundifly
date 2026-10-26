@@ -107,46 +107,8 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
   }
 
   void _handleBridgeMessage(String raw) {
-    try {
-      final data = jsonDecode(raw);
-      if (data is! Map || !mounted) return;
-      final player = context.read<AudioPlayerProvider>();
-
-      final type = data['type']?.toString();
-      if (type == 'time') {
-        final posSec = (data['position'] as num?)?.toDouble() ?? 0.0;
-        final durSec = (data['duration'] as num?)?.toDouble() ?? 0.0;
-        player.updateFromExternalVideo(
-          isPlaying: true,
-          position: Duration(milliseconds: (posSec * 1000).toInt()),
-          duration: Duration(milliseconds: (durSec * 1000).toInt()),
-        );
-      } else if (type == 'state') {
-        final state = data['state'] as int?;
-        if (state == 1) {
-          // Playing
-          player.updateFromExternalVideo(
-            isPlaying: true,
-            position: player.currentPosition,
-            duration: player.totalDuration,
-          );
-        } else if (state == 2) {
-          // Paused
-          player.updateFromExternalVideo(
-            isPlaying: false,
-            position: player.currentPosition,
-            duration: player.totalDuration,
-          );
-        } else if (state == 0) {
-          // Ended -> honor loop mode or advance to next song
-          if (player.loopMode == LoopMode.one) {
-            _controller.runJavaScript('window.externalSeek && window.externalSeek(0); window.externalPlay && window.externalPlay();');
-          } else {
-            player.next();
-          }
-        }
-      }
-    } catch (_) {}
+    // Native _player (via LocalAudioProxy) is the master engine for audio, duration, and time.
+    // The video player follows Flutter controls in sync.
   }
 
   void _loadVideo() {
@@ -193,6 +155,7 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
           'controls': 0,
           'disablekb': 1,
           'fs': 0,
+          'mute': 1,
           'modestbranding': 1,
           'rel': 0,
           'origin': 'https://v5.mp3paw.link'
@@ -205,6 +168,7 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
     }
 
     function onPlayerReady(event) {
+      event.target.mute();
       window.isPlayingIntended = true;
       event.target.playVideo();
       setInterval(function() {
@@ -241,7 +205,10 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
 
     window.externalPlay = function() {
       window.isPlayingIntended = true;
-      if (ytPlayer && ytPlayer.playVideo) ytPlayer.playVideo();
+      if (ytPlayer && ytPlayer.playVideo) {
+        ytPlayer.mute();
+        ytPlayer.playVideo();
+      }
     };
     window.externalPause = function() {
       window.isPlayingIntended = false;
@@ -253,6 +220,7 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
     window.loadNewVideo = function(newId) {
       window.isPlayingIntended = true;
       if (ytPlayer && ytPlayer.loadVideoById) {
+        ytPlayer.mute();
         ytPlayer.loadVideoById(newId);
       }
     };

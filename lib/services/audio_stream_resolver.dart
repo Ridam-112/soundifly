@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:dart_des/dart_des.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../models/song.dart';
+import 'local_audio_proxy.dart';
 
 class AudioStreamResolver {
   static final YoutubeExplode _yt = YoutubeExplode();
@@ -82,8 +83,10 @@ class AudioStreamResolver {
     if (ytId.isNotEmpty) {
       final ytResolved = await _resolveYouTube(ytId);
       if (ytResolved != null && ytResolved.isNotEmpty) {
-        _urlCache[song.id] = _CachedUrl(ytResolved);
-        return ytResolved;
+        // Stream through local proxy to bypass Android MediaPlayer User-Agent 403 blocks
+        final proxied = await LocalAudioProxy.getProxyUrl(ytResolved);
+        _urlCache[song.id] = _CachedUrl(proxied);
+        return proxied;
       }
     }
 
@@ -110,8 +113,9 @@ class AudioStreamResolver {
     if (ytId.isNotEmpty) {
       final ytResolved = await _resolveYouTube(ytId);
       if (ytResolved != null && ytResolved.isNotEmpty) {
-        _urlCache[song.id] = _CachedUrl(ytResolved);
-        return ytResolved;
+        final proxied = await LocalAudioProxy.getProxyUrl(ytResolved);
+        _urlCache[song.id] = _CachedUrl(proxied);
+        return proxied;
       }
     }
 
