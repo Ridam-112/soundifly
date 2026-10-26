@@ -239,19 +239,30 @@ class AudioPlayerProvider extends ChangeNotifier {
     try {
       final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
       debugPrint('[AudioPlayerProvider] Starting playback: $playableUrl');
-      await _player.play(UrlSource(playableUrl));
+      final mime = (playableUrl.contains('.mp4') || playableUrl.contains('mime=audio%2Fmp4')) ? 'audio/mp4' : null;
+      await _player.play(UrlSource(playableUrl, mimeType: mime));
       _isPlaying = true;
       _isLoading = false;
       _playbackErrorMessage = null;
     } catch (e) {
-      debugPrint('Initial play attempt: $e');
+      debugPrint('[AudioPlayerProvider] Initial play attempt failed: $e');
       try {
-        await Future.delayed(const Duration(milliseconds: 300));
-        final fallbackUrl = await AudioStreamResolver.resolveStreamUrl(song);
-        await _player.play(UrlSource(fallbackUrl));
-        _isPlaying = true;
-        _isLoading = false;
-        _playbackErrorMessage = null;
+        await Future.delayed(const Duration(milliseconds: 200));
+        final fallbackUrl = await AudioStreamResolver.resolveFallbackStreamUrl(song);
+        if (fallbackUrl != null && fallbackUrl.isNotEmpty) {
+          debugPrint('[AudioPlayerProvider] Playing smart fallback URL: $fallbackUrl');
+          final mime = (fallbackUrl.contains('.mp4') || fallbackUrl.contains('mime=audio%2Fmp4')) ? 'audio/mp4' : null;
+          await _player.play(UrlSource(fallbackUrl, mimeType: mime));
+          _isPlaying = true;
+          _isLoading = false;
+          _playbackErrorMessage = null;
+        } else {
+          final retryUrl = await AudioStreamResolver.resolveStreamUrl(song);
+          await _player.play(UrlSource(retryUrl));
+          _isPlaying = true;
+          _isLoading = false;
+          _playbackErrorMessage = null;
+        }
       } catch (err2) {
         debugPrint('Second play attempt error: $err2');
         _isPlaying = false;

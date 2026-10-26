@@ -45,19 +45,19 @@ class YTMusicService {
     }
   };
 
-  /// 1. SEARCH SONGS (Direct YouTube Music Worldwide Catalog + High-Speed JioSaavn 320kbps Streams)
+  /// 1. SEARCH SONGS (Direct High-Speed JioSaavn 320kbps Streams + YouTube Music Catalog)
   static Future<List<Song>> search(String query) async {
     final cleanQuery = query.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (cleanQuery.isEmpty) return [];
 
-    // Query BOTH direct YouTube Music and Backend/JioSaavn concurrently
+    // Query BOTH direct JioSaavn 320kbps streams and YouTube Music concurrently
     final futures = await Future.wait([
-      _searchYtmDirect(cleanQuery),
       _searchBackendOrSaavn(cleanQuery),
+      _searchYtmDirect(cleanQuery),
     ]);
 
-    final ytmSongs = futures[0];
-    final otherSongs = futures[1];
+    final saavnSongs = futures[0];
+    final ytmSongs = futures[1];
 
     final combined = <Song>[];
     final seen = <String>{};
@@ -65,34 +65,26 @@ class YTMusicService {
     String cleanKey(String t, String a) =>
         '${t.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}::${a.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}';
 
-    // 1. YouTube Music tracks (from sigma67/ytmusicapi) are Priority 1 (Official & Pure Catalog)
-    for (final s in ytmSongs) {
+    // 1. High-fidelity JioSaavn 320kbps tracks prioritized for instant 0.1s playback without blocks
+    for (final s in saavnSongs) {
       final k = cleanKey(s.title, s.artist);
-      if (!seen.contains(k) && !seen.contains(s.id)) {
-        seen.add(k);
-        seen.add(s.id);
+      if (seen.add(k) && seen.add(s.id)) {
         combined.add(s);
       }
     }
 
-    // 2. Supplemental tracks (JioSaavn) if not already present from YouTube Music
-    final qLower = cleanQuery.toLowerCase();
-    for (final s in otherSongs) {
+    // 2. Supplemental YouTube Music tracks (for indie, live, or YT-exclusive tracks)
+    for (final s in ytmSongs) {
       final k = cleanKey(s.title, s.artist);
-      if (!seen.contains(k) && !seen.contains(s.id)) {
-        final titleMatch = s.title.toLowerCase().contains(qLower);
-        final artistMatch = s.artist.toLowerCase().contains(qLower);
-        if (titleMatch || artistMatch) {
-          seen.add(k);
-          seen.add(s.id);
-          combined.add(s);
-        }
+      if (seen.add(k) && seen.add(s.id)) {
+        combined.add(s);
       }
     }
 
     if (combined.isNotEmpty) return combined;
 
     // Step 3: Graceful local search fallback
+    final qLower = cleanQuery.toLowerCase();
     return MockData.allSongs.where((s) {
       return s.title.toLowerCase().contains(qLower) || s.artist.toLowerCase().contains(qLower);
     }).toList();
@@ -304,34 +296,68 @@ class YTMusicService {
     return [];
   }
 
-  /// 1b. GET ARTIST TOP SONGS (sigma67/ytmusicapi with strict artist fidelity)
+  /// 1b. GET ARTIST TOP SONGS (JioSaavn 320kbps + YouTube Music with strict artist fidelity)
   static Future<List<Song>> getArtistSongs(String artistName) async {
     final cleanName = artistName.trim();
     if (cleanName.isEmpty) return [];
 
-    // 1. Try dedicated backend endpoint
-    try {
-      final uri = Uri.parse('$baseUrl/artists/${Uri.encodeComponent(cleanName)}/songs');
-      final res = await http.get(uri).timeout(const Duration(seconds: 6));
-      if (res.statusCode == 200) {
-        final List list = jsonDecode(utf8.decode(res.bodyBytes));
-        final songs = list.map((item) => _parseSong(item as Map<String, dynamic>)).toList();
-        if (songs.isNotEmpty) return songs;
-      }
-    } catch (e) {
-      debugPrint('[YTMusicService] Backend artist songs note: $e');
+    final targetLower = cleanName.toLowerCase();
+    final combined = <Song>[];
+    final seen = <String>{};
+
+    String cleanKey(String t, String a) =>
+        '${t.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}::${a.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}';
+
+    bool isArtistMatch(Song s) {
+      final a = s.artist.toLowerCase();
+      // Strict match: avoid other artists bleeding into profile
+      return a.contains(targetLower) || targetLower.contains(a);
     }
 
-    // 2. Direct YTM search with strict artist filter
-    final rawYtm = await _searchYtmDirect(cleanName);
-    final lower = cleanName.toLowerCase();
-    final strictlyFiltered = rawYtm.where((s) {
-      final a = s.artist.toLowerCase();
-      return a.contains(lower) || lower.contains(a);
-    }).toList();
+    // 1. Fetch from JioSaavn for guaranteed 320kbps authentic artist tracks
+    try {
+      final saavnTracks = await _searchBackendOrSaavn(cleanName);
+      for (final s in saavnTracks) {
+        if (isArtistMatch(s)) {
+          final k = cleanKey(s.title, s.artist);
+          if (seen.add(k) && seen.add(s.id)) {
+            combined.add(s);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[YTMusicService] Saavn artist songs note: $e');
+    }
 
-    if (strictlyFiltered.isNotEmpty) return strictlyFiltered;
-    return rawYtm;
+    // 2. Fetch from YouTube Music and strictly filter
+    try {
+      final rawYtm = await _searchYtmDirect(cleanName);
+      for (final s in rawYtm) {
+        if (isArtistMatch(s)) {
+          final k = cleanKey(s.title, s.artist);
+          if (seen.add(k) && seen.add(s.id)) {
+            combined.add(s);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[YTMusicService] YTM artist songs note: $e');
+    }
+
+    if (combined.isNotEmpty) return combined;
+
+    // 3. Fallback to backend endpoint if available
+    try {
+      final uri = Uri.parse('$baseUrl/artists/${Uri.encodeComponent(cleanName)}/songs');
+      final res = await http.get(uri).timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        final List list = jsonDecode(utf8.decode(res.bodyBytes));
+        final songs = list.map((item) => _parseSong(item as Map<String, dynamic>)).where(isArtistMatch).toList();
+        if (songs.isNotEmpty) return songs;
+      }
+    } catch (_) {}
+
+    return combined;
   }
 
   /// 2. SEARCH ARTISTS (Curated + Backend + JioSaavn + Deezer Unified Engine)

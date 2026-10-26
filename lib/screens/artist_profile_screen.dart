@@ -63,7 +63,7 @@ class _ArtistProfileScreenState extends State<ArtistProfileScreen> {
         }).toList();
 
         setState(() {
-          _popularSongs = filtered.isNotEmpty ? filtered : results;
+          _popularSongs = filtered;
           _isLoadingSongs = false;
         });
       }

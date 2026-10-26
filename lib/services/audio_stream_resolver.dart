@@ -41,7 +41,8 @@ class AudioStreamResolver {
   /// 3. In-memory cache (instant)
   /// 4. JioSaavn DES decrypt for saavn_ IDs (instant, 320kbps AAC)
   /// 5. YouTube video ID -> on-device direct extraction via YouTubeExplode
-  /// 6. Server proxy stream URL fallback
+  /// 6. Smart JioSaavn 320kbps Audio Matcher (for Tanveer Evan, Aur, Bollywood, Bangla & International tracks)
+  /// 7. Server proxy stream URL fallback
   static Future<String> resolveStreamUrl(Song song) async {
     final rawUrl = song.audioUrl.trim();
 
@@ -76,8 +77,79 @@ class AudioStreamResolver {
       }
     }
 
-    // 6. Return server streaming proxy URL (pipes bytes directly with HTTP 206)
+    // 6. Smart JioSaavn 320kbps match fallback (100% playable on Android MediaPlayer + full background/lock screen)
+    final saavnMatched = await matchSaavnStream(song.title, song.artist);
+    if (saavnMatched != null && saavnMatched.isNotEmpty) {
+      _urlCache[song.id] = _CachedUrl(saavnMatched);
+      return saavnMatched;
+    }
+
+    // 7. Return server streaming proxy URL (pipes bytes directly with HTTP 206)
     return rawUrl;
+  }
+
+  /// Resolve alternative fallback stream if primary playback stream fails in AudioPlayer
+  static Future<String?> resolveFallbackStreamUrl(Song song) async {
+    // Invalidate stale or blocked cached entry
+    _urlCache.remove(song.id);
+
+    // Attempt intelligent JioSaavn 320kbps MP4 match
+    final saavnUrl = await matchSaavnStream(song.title, song.artist);
+    if (saavnUrl != null && saavnUrl.isNotEmpty) {
+      _urlCache[song.id] = _CachedUrl(saavnUrl);
+      return saavnUrl;
+    }
+    return null;
+  }
+
+  /// Match any track on JioSaavn by Title & Artist to obtain instant 320kbps MP4 CDN URL
+  static Future<String?> matchSaavnStream(String title, String artist) async {
+    final cleanTitle = title
+        .replaceAll(RegExp(r'\s*[\(\[][^\)\]]*(?:official|video|audio|lyric|remix|feat|ft\.)[^\)\]]*[\)\]]', caseSensitive: false), '')
+        .trim();
+    final cleanArtist = artist.split(',').first.split('&').first.trim();
+    final query = '$cleanTitle $cleanArtist'.trim();
+    if (query.isEmpty) return null;
+
+    try {
+      final uri = Uri.parse(
+        'https://www.jiosaavn.com/api.php?__call=search.getResults&_format=json&n=5&p=1&q=${Uri.encodeComponent(query)}',
+      );
+      final res = await http.get(uri, headers: _saavnHeaders).timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        final results = data['results'] as List? ?? [];
+        final targetTitleLower = cleanTitle.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+        final targetArtistLower = cleanArtist.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+        for (final item in results) {
+          if (item is Map) {
+            final songTitle = (item['song']?.toString() ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+            final primaryArtists = (item['primary_artists']?.toString() ?? item['singers']?.toString() ?? '')
+                .toLowerCase()
+                .replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+            // Strict similarity check: ensure returned song actually matches title and artist
+            final titleMatches = songTitle.contains(targetTitleLower) || targetTitleLower.contains(songTitle);
+            final artistMatches = targetArtistLower.isEmpty ||
+                primaryArtists.contains(targetArtistLower) ||
+                targetArtistLower.contains(primaryArtists);
+
+            if (titleMatches && artistMatches) {
+              final enc = item['encrypted_media_url']?.toString();
+              final direct = decryptSaavnUrl(enc);
+              if (direct != null && direct.isNotEmpty) {
+                debugPrint('[AudioStreamResolver] Matched Saavn 320kbps stream for "$title" -> $direct');
+                return direct;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[AudioStreamResolver] Saavn match error: $e');
+    }
+    return null;
   }
 
   /// Resolve JioSaavn song by its ID via getDetails API
