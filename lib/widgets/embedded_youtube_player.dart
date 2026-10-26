@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../theme/app_theme.dart';
 
 class EmbeddedYoutubePlayer extends StatefulWidget {
@@ -49,6 +50,12 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
           },
         ),
       );
+
+    // Disable gesture requirement so video autoplays on its own immediately
+    if (_controller.platform is AndroidWebViewController) {
+      (_controller.platform as AndroidWebViewController).setMediaPlaybackRequiresUserGesture(false);
+    }
+
     _loadVideo();
   }
 
@@ -62,18 +69,39 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body, html { width: 100%; height: 100%; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-    .video-wrapper { position: relative; width: 100%; height: 100%; }
-    iframe { width: 100%; height: 100%; border: none; }
+    #player { width: 100%; height: 100%; }
   </style>
 </head>
 <body>
-  <div class="video-wrapper">
-    <iframe 
-      src="https://www.youtube-nocookie.com/embed/$cleanId?autoplay=1&playsinline=1&enablejsapi=1&rel=0&modestbranding=1" 
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-      allowfullscreen>
-    </iframe>
-  </div>
+  <div id="player"></div>
+  <script>
+    var tag = document.createElement('script');
+    tag.src = "https://www.youtube.com/iframe_api";
+    var firstScriptTag = document.getElementsByTagName('script')[0];
+    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+    var ytPlayer;
+    function onYouTubeIframeAPIReady() {
+      ytPlayer = new YT.Player('player', {
+        height: '100%',
+        width: '100%',
+        videoId: '$cleanId',
+        playerVars: {
+          'autoplay': 1,
+          'playsinline': 1,
+          'enablejsapi': 1,
+          'modestbranding': 1,
+          'rel': 0,
+          'controls': 1
+        },
+        events: {
+          'onReady': function(e) {
+            e.target.playVideo();
+          }
+        }
+      });
+    }
+  </script>
 </body>
 </html>
 ''';

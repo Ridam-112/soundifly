@@ -22,11 +22,12 @@ class FullPlayerModal extends StatefulWidget {
 
 class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  bool _showVideo = false;
+  bool _showVideo = true;
 
   @override
   void initState() {
     super.initState();
+    _showVideo = true;
     _tabController = TabController(
       length: 3,
       vsync: this,
