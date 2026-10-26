@@ -345,15 +345,19 @@ class DesktopBottomPlayerBar extends StatelessWidget {
                             ),
                             InkWell(
                               onTap: () {
-                                final ytUrl = song.youtubeEmbedUrl.isNotEmpty ? song.youtubeEmbedUrl : song.youtubeWatchUrl;
-                                launchUrl(Uri.parse(ytUrl), mode: LaunchMode.inAppWebView);
+                                showModalBottomSheet(
+                                  context: context,
+                                  isScrollControlled: true,
+                                  backgroundColor: Colors.transparent,
+                                  builder: (ctx) => const FullPlayerModal(),
+                                );
                               },
                               child: const Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(Icons.open_in_new_rounded, color: Colors.amberAccent, size: 12),
+                                  Icon(Icons.play_circle_fill_rounded, color: Colors.amberAccent, size: 12),
                                   SizedBox(width: 3),
-                                  Text('YouTube', style: TextStyle(color: Colors.amberAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                                  Text('Play Video', style: TextStyle(color: Colors.amberAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                                 ],
                               ),
                             ),

@@ -45,19 +45,21 @@ class YTMusicService {
     }
   };
 
-  /// 1. SEARCH SONGS (Direct High-Speed JioSaavn 320kbps Streams + YouTube Music Catalog)
+  /// 1. SEARCH SONGS (Direct JioSaavn 320kbps + MP3Paw/dlsrv Global Engine + YouTube Music)
   static Future<List<Song>> search(String query) async {
     final cleanQuery = query.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (cleanQuery.isEmpty) return [];
 
-    // Query BOTH direct JioSaavn 320kbps streams and YouTube Music concurrently
+    // Query JioSaavn 320kbps streams, dlsrv worldwide catalog, and YouTube Music concurrently
     final futures = await Future.wait([
       _searchBackendOrSaavn(cleanQuery),
+      _searchDlsrv(cleanQuery),
       _searchYtmDirect(cleanQuery),
     ]);
 
     final saavnSongs = futures[0];
-    final ytmSongs = futures[1];
+    final dlsrvSongs = futures[1];
+    final ytmSongs = futures[2];
 
     final combined = <Song>[];
     final seen = <String>{};
@@ -65,7 +67,7 @@ class YTMusicService {
     String cleanKey(String t, String a) =>
         '${t.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}::${a.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '')}';
 
-    // 1. High-fidelity JioSaavn 320kbps tracks prioritized for instant 0.1s playback without blocks
+    // 1. High-fidelity JioSaavn 320kbps tracks prioritized for instant 0.1s playback
     for (final s in saavnSongs) {
       final k = cleanKey(s.title, s.artist);
       if (seen.add(k) && seen.add(s.id)) {
@@ -73,7 +75,15 @@ class YTMusicService {
       }
     }
 
-    // 2. Supplemental YouTube Music tracks (for indie, live, or YT-exclusive tracks)
+    // 2. High-speed MP3Paw/dlsrv worldwide tracks (AUR, Encore band, Tanveer Evan, indies, live)
+    for (final s in dlsrvSongs) {
+      final k = cleanKey(s.title, s.artist);
+      if (seen.add(k) && seen.add(s.id)) {
+        combined.add(s);
+      }
+    }
+
+    // 3. Supplemental YouTube Music tracks
     for (final s in ytmSongs) {
       final k = cleanKey(s.title, s.artist);
       if (seen.add(k) && seen.add(s.id)) {
@@ -83,11 +93,75 @@ class YTMusicService {
 
     if (combined.isNotEmpty) return combined;
 
-    // Step 3: Graceful local search fallback
+    // Step 4: Graceful local search fallback
     final qLower = cleanQuery.toLowerCase();
     return MockData.allSongs.where((s) {
       return s.title.toLowerCase().contains(qLower) || s.artist.toLowerCase().contains(qLower);
     }).toList();
+  }
+
+  /// Search worldwide tracks via dlsrv engine (used by MP3Paw for 100% videoId accuracy)
+  static Future<List<Song>> _searchDlsrv(String query) async {
+    try {
+      final uri = Uri.parse('https://media.dlsrv.online/search/data');
+      final res = await http.post(
+        uri,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Origin': 'https://v5.mp3paw.link',
+          'Referer': 'https://v5.mp3paw.link/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        },
+        body: jsonEncode({'query': query}),
+      ).timeout(const Duration(seconds: 4));
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        final list = data['data'] as List? ?? [];
+        final songs = <Song>[];
+        for (final item in list) {
+          if (item is! Map) continue;
+          final videoId = item['videoId']?.toString() ?? '';
+          if (videoId.isEmpty || !RegExp(r'^[a-zA-Z0-9_-]{11}$').hasMatch(videoId)) continue;
+
+          final rawTitle = item['title']?.toString() ?? 'Unknown Track';
+          final title = _cleanText(rawTitle);
+          final durationStr = item['duration']?.toString() ?? '3:30';
+          final parts = durationStr.split(':').map((s) => int.tryParse(s) ?? 0).toList();
+          final durSec = parts.length == 2
+              ? parts[0] * 60 + parts[1]
+              : (parts.length == 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : 210);
+
+          String artist = 'Soundifly Artist';
+          if (rawTitle.contains(' - ')) {
+            artist = rawTitle.split(' - ').first.trim();
+          } else if (rawTitle.contains(' by ')) {
+            artist = rawTitle.split(' by ').last.split('|').first.trim();
+          } else if (rawTitle.contains('|')) {
+            artist = rawTitle.split('|').last.trim();
+          }
+
+          final thumb = item['imgSrc']?.toString() ?? 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
+
+          songs.add(Song(
+            id: videoId,
+            title: title,
+            artist: artist.isNotEmpty ? artist : 'Soundifly Artist',
+            album: 'Single',
+            coverUrl: thumb,
+            audioUrl: '$baseUrl/stream/$videoId',
+            duration: Duration(seconds: durSec),
+            genre: 'YouTube Music',
+            releaseYear: '2026',
+          ));
+        }
+        return songs;
+      }
+    } catch (e) {
+      debugPrint('[YTMusicService] dlsrv search note: $e');
+    }
+    return [];
   }
 
   static Future<List<Song>> _searchYtmDirect(String query) async {
@@ -329,7 +403,20 @@ class YTMusicService {
       debugPrint('[YTMusicService] Saavn artist songs note: $e');
     }
 
-    // 2. Fetch from YouTube Music and strictly filter
+    // 2. Fetch from dlsrv global engine (AUR, Encore band, Tanveer Evan, indies)
+    try {
+      final dlsrvTracks = await _searchDlsrv(cleanName);
+      for (final s in dlsrvTracks) {
+        if (isArtistMatch(s)) {
+          final k = cleanKey(s.title, s.artist);
+          if (seen.add(k) && seen.add(s.id)) {
+            combined.add(s);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 3. Fetch from YouTube Music and strictly filter
     try {
       final rawYtm = await _searchYtmDirect(cleanName);
       for (final s in rawYtm) {

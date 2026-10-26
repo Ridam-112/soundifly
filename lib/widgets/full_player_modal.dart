@@ -10,6 +10,7 @@ import 'lyrics_viewer.dart';
 import 'app_network_image.dart';
 import 'song_share_modal.dart';
 import 'add_to_playlist_sheet.dart';
+import 'embedded_youtube_player.dart';
 
 class FullPlayerModal extends StatefulWidget {
   final int initialTabIndex;
@@ -21,6 +22,7 @@ class FullPlayerModal extends StatefulWidget {
 
 class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  bool _showVideo = false;
 
   @override
   void initState() {
@@ -140,11 +142,20 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.smart_display_rounded, color: Colors.white70, size: 24),
-                            tooltip: 'Watch / Embed on YouTube',
+                            icon: Icon(
+                              _showVideo ? Icons.image_rounded : Icons.smart_display_rounded,
+                              color: _showVideo ? AppColors.primary : Colors.white70,
+                              size: 24,
+                            ),
+                            tooltip: _showVideo ? 'Show Album Cover' : 'Play Video in Box',
                             onPressed: () {
-                              final ytUrl = song.youtubeEmbedUrl.isNotEmpty ? song.youtubeEmbedUrl : song.youtubeWatchUrl;
-                              launchUrl(Uri.parse(ytUrl), mode: LaunchMode.inAppWebView);
+                              if (song.youtubeVideoId.isEmpty) return;
+                              setState(() {
+                                _showVideo = !_showVideo;
+                              });
+                              if (_showVideo && player.isPlaying) {
+                                player.togglePlayPause();
+                              }
                             },
                           ),
                           IconButton(
@@ -237,7 +248,7 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
         children: [
           const Spacer(),
 
-          // Big Glowing Album Art
+          // Big Glowing Album Art or Inline YouTube Video
           Center(
             child: Container(
               width: MediaQuery.of(context).size.width * 0.76,
@@ -253,12 +264,59 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
                   ),
                 ],
               ),
-              child: AppNetworkImage(
-                url: song.coverUrl,
-                width: 320,
-                height: 320,
-                borderRadius: BorderRadius.circular(24),
-              ),
+              child: (_showVideo && song.youtubeVideoId.isNotEmpty)
+                  ? EmbeddedYoutubePlayer(
+                      videoId: song.youtubeVideoId,
+                      width: 320,
+                      height: 320,
+                      onClose: () => setState(() => _showVideo = false),
+                    )
+                  : Stack(
+                      children: [
+                        AppNetworkImage(
+                          url: song.coverUrl,
+                          width: 320,
+                          height: 320,
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        if (song.youtubeVideoId.isNotEmpty)
+                          Positioned(
+                            bottom: 12,
+                            right: 12,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() => _showVideo = true);
+                                if (player.isPlaying) {
+                                  player.togglePlayPause();
+                                }
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.75),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(color: Colors.white24, width: 1),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.play_circle_fill_rounded, color: Colors.redAccent, size: 16),
+                                    SizedBox(width: 5),
+                                    Text(
+                                      'Watch Video',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
             ),
           ),
 
@@ -329,6 +387,46 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
           ),
 
           const SizedBox(height: 18),
+
+          if (player.playbackErrorMessage != null) ...[
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline_rounded, color: Colors.amberAccent, size: 18),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Audio stream restricted.',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ),
+                  if (song.youtubeVideoId.isNotEmpty)
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        visualDensity: VisualDensity.compact,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                      label: const Text('Play in Box', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      onPressed: () {
+                        player.clearPlaybackError();
+                        setState(() => _showVideo = true);
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ],
 
           // Seeker Slider
           SliderTheme(
