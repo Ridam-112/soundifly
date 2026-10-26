@@ -43,6 +43,53 @@ class AudioPlayerProvider extends ChangeNotifier {
   /// Monotonically increasing session ID to prevent out-of-order / racing audio playback
   int _playSessionId = 0;
 
+  // External synchronized YouTube video controller bridge
+  bool _isExternalVideoPlayback = false;
+  bool get isExternalVideoPlayback => _isExternalVideoPlayback;
+  void Function(bool play)? onExternalPlayPauseRequested;
+  void Function(Duration position)? onExternalSeekRequested;
+
+  void attachExternalVideoController({
+    required void Function(bool play) onPlayPause,
+    required void Function(Duration position) onSeek,
+  }) {
+    _isExternalVideoPlayback = true;
+    onExternalPlayPauseRequested = onPlayPause;
+    onExternalSeekRequested = onSeek;
+  }
+
+  void detachExternalVideoController() {
+    _isExternalVideoPlayback = false;
+    onExternalPlayPauseRequested = null;
+    onExternalSeekRequested = null;
+  }
+
+  void updateFromExternalVideo({
+    required bool isPlaying,
+    required Duration position,
+    required Duration duration,
+    bool isLoading = false,
+  }) {
+    _isPlaying = isPlaying;
+    _isLoading = isLoading;
+    _playbackErrorMessage = null;
+    _currentPosition = position;
+    if (duration > Duration.zero) {
+      _totalDuration = duration;
+    }
+
+    _updateActiveLyricIndex(position);
+
+    MediaSessionService.updatePlaybackState(
+      isPlaying: isPlaying,
+      position: position,
+      duration: _totalDuration,
+      isLoading: isLoading,
+    );
+
+    notifyListeners();
+  }
+
   // Real-time synchronization callback for Listen Together room
   void Function(Song? song, bool isPlaying, Duration position)? onPlaybackStateChanged;
 
@@ -249,10 +296,32 @@ class AudioPlayerProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // If external video controller is attached and song has YouTube ID, delegate directly
+      if (_isExternalVideoPlayback && song.youtubeVideoId.isNotEmpty) {
+        debugPrint('[AudioPlayerProvider] Delegating playback to synchronized video player: "${song.title}"');
+        _isLoading = false;
+        _isPlaying = true;
+        _playbackErrorMessage = null;
+        notifyListeners();
+        _broadcastSync();
+        loadLyricsForCurrentSong();
+        return;
+      }
+
       final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
       // Abort immediately if user switched to another track while resolving
       if (sessionId != _playSessionId) {
         debugPrint('[AudioPlayerProvider] Discarding resolve for "${song.title}" (stale session $sessionId)');
+        return;
+      }
+
+      if (_isExternalVideoPlayback && song.youtubeVideoId.isNotEmpty) {
+        _isLoading = false;
+        _isPlaying = true;
+        _playbackErrorMessage = null;
+        notifyListeners();
+        _broadcastSync();
+        loadLyricsForCurrentSong();
         return;
       }
 
@@ -390,6 +459,20 @@ class AudioPlayerProvider extends ChangeNotifier {
   }
 
   Future<void> togglePlayPause() async {
+    if (_isExternalVideoPlayback && onExternalPlayPauseRequested != null) {
+      final willPlay = !_isPlaying;
+      _isPlaying = willPlay;
+      MediaSessionService.updatePlaybackState(
+        isPlaying: willPlay,
+        position: _currentPosition,
+        duration: _totalDuration,
+      );
+      notifyListeners();
+      onExternalPlayPauseRequested!(willPlay);
+      _broadcastSync();
+      return;
+    }
+
     if (_currentSong == null && _queue.isNotEmpty) {
       await playSong(_queue.first);
       return;
@@ -424,6 +507,13 @@ class AudioPlayerProvider extends ChangeNotifier {
       isPlaying: _isPlaying,
     );
     notifyListeners();
+
+    if (_isExternalVideoPlayback && onExternalSeekRequested != null) {
+      onExternalSeekRequested!(position);
+      _broadcastSync();
+      return;
+    }
+
     try {
       await _player.seek(position);
     } catch (e) {
