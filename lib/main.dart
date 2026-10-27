@@ -26,8 +26,8 @@ void main() async {
           androidNotificationChannelDescription: 'Soundifly Notification Shade and Lock Screen Media Controls',
           androidNotificationIcon: 'drawable/ic_stat_music',
           androidShowNotificationBadge: true,
-          androidNotificationOngoing: false,
-          androidStopForegroundOnPause: false,
+          androidNotificationOngoing: true,
+          androidStopForegroundOnPause: true,
           androidNotificationClickStartsActivity: true,
         ),
       );

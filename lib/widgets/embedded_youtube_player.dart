@@ -108,9 +108,13 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
 
   void _handleBridgeMessage(String raw) {
     try {
+      final player = context.read<AudioPlayerProvider>();
+      if (!player.isExternalVideoPlayback) {
+        // Native authorized audio player is master of audio/time; video only follows
+        return;
+      }
       final data = jsonDecode(raw);
       if (data is! Map || !mounted) return;
-      final player = context.read<AudioPlayerProvider>();
 
       final type = data['type']?.toString();
       if (type == 'time') {
@@ -153,6 +157,8 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
 
   void _loadVideo() {
     final cleanId = widget.videoId.trim();
+    final isExternal = context.read<AudioPlayerProvider>().isExternalVideoPlayback;
+    final muteParam = isExternal ? 0 : 1;
     final html = '''
 <!DOCTYPE html>
 <html>
@@ -197,6 +203,7 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
           'controls': 0,
           'disablekb': 1,
           'fs': 0,
+          'mute': $muteParam,
           'modestbranding': 1,
           'rel': 0,
           'origin': 'https://v5.mp3paw.link'
@@ -210,6 +217,11 @@ class _EmbeddedYoutubePlayerState extends State<EmbeddedYoutubePlayer> {
 
     function onPlayerReady(event) {
       window.isPlayingIntended = true;
+      if ($muteParam === 1) {
+        event.target.mute();
+      } else {
+        event.target.unMute();
+      }
       event.target.playVideo();
       setInterval(function() {
         if (ytPlayer && ytPlayer.getCurrentTime && ytPlayer.getPlayerState && ytPlayer.getPlayerState() === 1) {

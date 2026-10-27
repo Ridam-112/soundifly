@@ -3,7 +3,10 @@ package com.soundifly.soundifly
 import com.ryanheise.audioservice.AudioServiceActivity
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.Build
 import android.content.Context
+import android.content.pm.PackageManager
+import android.Manifest
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -18,6 +21,15 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Request runtime notification permission on Android 13+ (API 33+) for persistent media controls
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
+
+        // Keep CPU awake for continuous background audio playback
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
@@ -62,17 +74,6 @@ class MainActivity : AudioServiceActivity() {
         if (wakeLock?.isHeld == false) {
             wakeLock?.acquire(24 * 60 * 60 * 1000L)
         }
-        resumeAllWebViews()
-    }
-
-    override fun onPause() {
-        super.onPause()
-        resumeAllWebViews()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        resumeAllWebViews()
     }
 
     override fun onDestroy() {
@@ -80,22 +81,5 @@ class MainActivity : AudioServiceActivity() {
             wakeLock?.release()
         }
         super.onDestroy()
-    }
-
-    private fun resumeAllWebViews() {
-        try {
-            val root = window?.decorView ?: return
-            fun findAndResume(view: View) {
-                if (view is WebView) {
-                    view.onResume()
-                    view.resumeTimers()
-                } else if (view is ViewGroup) {
-                    for (i in 0 until view.childCount) {
-                        findAndResume(view.getChildAt(i))
-                    }
-                }
-            }
-            findAndResume(root)
-        } catch (_: Exception) {}
     }
 }

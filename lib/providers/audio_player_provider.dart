@@ -309,24 +309,30 @@ class AudioPlayerProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      if (song.youtubeVideoId.isNotEmpty) {
-        debugPrint('[AudioPlayerProvider] Delegating to synchronized YouTube player: "${song.title}"');
-        _isExternalVideoPlayback = true;
-        _isLoading = false;
-        _isPlaying = true;
-        _playbackErrorMessage = null;
-        try {
+      // 1. Prioritize resolving authorized direct audio streams (enables true native Android background playback)
+      final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
+      if (sessionId != _playSessionId) return;
+
+      if (playableUrl != null && playableUrl.isNotEmpty) {
+        debugPrint('[AudioPlayerProvider] Playing authorized audio stream: $playableUrl');
+        _isExternalVideoPlayback = false;
+        final mime = (playableUrl.contains('.mp4') || playableUrl.contains('mime=audio%2Fmp4')) ? 'audio/mp4' : null;
+        await _player.play(UrlSource(playableUrl, mimeType: mime));
+
+        if (sessionId != _playSessionId) {
           await _player.stop();
-          if (!kIsWeb) {
-            await _player.setReleaseMode(ReleaseMode.loop);
-            await _player.setVolume(0.0);
-            await _player.play(AssetSource('audio/silence.mp3'));
-          }
-        } catch (_) {}
+          return;
+        }
+
+        _isPlaying = true;
+        _isLoading = false;
+        _playbackErrorMessage = null;
+        onExternalPlayPauseRequested?.call(true);
         notifyListeners();
         _broadcastSync();
         loadLyricsForCurrentSong();
 
+        // Prompt battery optimization exemption if needed for uninterrupted background music
         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
           BatteryOptimizationService.isIgnoringBatteryOptimizations().then((ignored) {
             if (!ignored) {
@@ -337,35 +343,29 @@ class AudioPlayerProvider extends ChangeNotifier {
         return;
       }
 
-      _isExternalVideoPlayback = false;
-      final playableUrl = await AudioStreamResolver.resolveStreamUrl(song);
-      // Abort immediately if user switched to another track while resolving
-      if (sessionId != _playSessionId) {
-        debugPrint('[AudioPlayerProvider] Discarding resolve for "${song.title}" (stale session $sessionId)');
+      // 2. If no authorized audio stream could be matched, but YouTube video is available:
+      // Delegate to embedded YouTube player in compliance with YouTube terms (active screen playback)
+      if (song.youtubeVideoId.isNotEmpty) {
+        debugPrint('[AudioPlayerProvider] Falling back to compliant YouTube embedded player for: "${song.title}"');
+        _isExternalVideoPlayback = true;
+        _isLoading = false;
+        _isPlaying = true;
+        _playbackErrorMessage = null;
+        try {
+          await _player.stop();
+        } catch (_) {}
+        notifyListeners();
+        _broadcastSync();
+        loadLyricsForCurrentSong();
         return;
       }
 
-      debugPrint('[AudioPlayerProvider] Starting playback: $playableUrl');
-      final mime = (playableUrl.contains('.mp4') || playableUrl.contains('mime=audio%2Fmp4')) ? 'audio/mp4' : null;
-      await _player.play(UrlSource(playableUrl, mimeType: mime));
-
-      // Re-verify after async play call finishes
-      if (sessionId != _playSessionId) {
-        debugPrint('[AudioPlayerProvider] Stopping stale playback after play finished for "${song.title}"');
-        await _player.stop();
-        return;
-      }
-
-      _isPlaying = true;
-      _isLoading = false;
-      _playbackErrorMessage = null;
-      onExternalPlayPauseRequested?.call(true);
-      notifyListeners();
-      _broadcastSync();
-      loadLyricsForCurrentSong();
+      throw Exception('No playable audio stream available for "${song.title}"');
     } catch (e) {
       if (sessionId != _playSessionId) return;
       debugPrint('[AudioPlayerProvider] Initial play attempt failed: $e');
+
+      // 3. Fallback resolution: attempt lower-bitrate (160kbps/96kbps) authorized stream
       try {
         await Future.delayed(const Duration(milliseconds: 150));
         if (sessionId != _playSessionId) return;
@@ -374,9 +374,11 @@ class AudioPlayerProvider extends ChangeNotifier {
         if (sessionId != _playSessionId) return;
 
         if (fallbackUrl != null && fallbackUrl.isNotEmpty) {
-          debugPrint('[AudioPlayerProvider] Playing smart fallback URL: $fallbackUrl');
+          debugPrint('[AudioPlayerProvider] Playing authorized fallback stream: $fallbackUrl');
+          _isExternalVideoPlayback = false;
           final mime = (fallbackUrl.contains('.mp4') || fallbackUrl.contains('mime=audio%2Fmp4')) ? 'audio/mp4' : null;
           await _player.play(UrlSource(fallbackUrl, mimeType: mime));
+
           if (sessionId != _playSessionId) {
             await _player.stop();
             return;
@@ -384,21 +386,34 @@ class AudioPlayerProvider extends ChangeNotifier {
           _isPlaying = true;
           _isLoading = false;
           _playbackErrorMessage = null;
-        } else {
-          final retryUrl = await AudioStreamResolver.resolveStreamUrl(song);
-          if (sessionId != _playSessionId) return;
-          await _player.play(UrlSource(retryUrl));
-          if (sessionId != _playSessionId) {
-            await _player.stop();
-            return;
-          }
-          _isPlaying = true;
-          _isLoading = false;
-          _playbackErrorMessage = null;
+          notifyListeners();
+          _broadcastSync();
+          loadLyricsForCurrentSong();
+          return;
         }
+
+        // If fallback audio also unavailable, but YouTube video ID is present
+        if (song.youtubeVideoId.isNotEmpty) {
+          debugPrint('[AudioPlayerProvider] Fallback to YouTube embedded player for "${song.title}"');
+          _isExternalVideoPlayback = true;
+          _isLoading = false;
+          _isPlaying = true;
+          _playbackErrorMessage = null;
+          try {
+            await _player.stop();
+          } catch (_) {}
+          notifyListeners();
+          _broadcastSync();
+          loadLyricsForCurrentSong();
+          return;
+        }
+
+        _isPlaying = false;
+        _isLoading = false;
+        _playbackErrorMessage = 'Could not load audio for "${song.title}". Please tap to retry.';
       } catch (err2) {
         if (sessionId != _playSessionId) return;
-        debugPrint('Second play attempt error: $err2');
+        debugPrint('[AudioPlayerProvider] Second play attempt error: $err2');
         _isPlaying = false;
         _isLoading = false;
         _playbackErrorMessage = 'Could not load audio. Please tap to try again.';

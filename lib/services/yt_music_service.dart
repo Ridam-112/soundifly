@@ -906,10 +906,19 @@ class YTMusicService {
   }
 
   static Song _parseSong(Map<String, dynamic> json) {
+    var rawTitle = _cleanText(json['title']?.toString() ?? 'Unknown Track');
+    var rawArtist = _cleanText(json['artist']?.toString() ?? 'Unknown Artist');
+
+    if ((rawArtist == 'Unknown Artist' || rawArtist.isEmpty) && rawTitle.contains(' - ')) {
+      final parts = rawTitle.split(' - ');
+      rawArtist = parts.first.trim();
+      rawTitle = parts.sublist(1).join(' - ').trim();
+    }
+
     return Song(
       id: json['id'] ?? 'yt_${DateTime.now().millisecondsSinceEpoch}',
-      title: _cleanText(json['title']?.toString() ?? 'Unknown Track'),
-      artist: _cleanText(json['artist']?.toString() ?? 'Unknown Artist'),
+      title: rawTitle,
+      artist: rawArtist.isNotEmpty ? rawArtist : 'Unknown Artist',
       album: _cleanText(json['album']?.toString() ?? 'Single'),
       coverUrl: json['coverUrl'] ?? 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
       audioUrl: json['audioUrl'] ?? '$baseUrl/stream/${json['id']}',

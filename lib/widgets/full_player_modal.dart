@@ -594,6 +594,29 @@ class _FullPlayerModalState extends State<FullPlayerModal> with SingleTickerProv
             ],
           ),
 
+          if (player.isExternalVideoPlayback) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.amber.withValues(alpha: 0.25)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.ondemand_video_rounded, color: Colors.amberAccent, size: 14),
+                  SizedBox(width: 6),
+                  Text(
+                    'YouTube Video Mode • Keep screen active for playback',
+                    style: TextStyle(color: Colors.amberAccent, fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           const Spacer(),
 
           // Bottom Listen Together pill
